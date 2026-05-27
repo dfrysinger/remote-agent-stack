@@ -101,8 +101,47 @@ if [ -f "$HOME/Library/Keychains/login.keychain-db" ] && command -v security >/d
   security unlock-keychain "$HOME/Library/Keychains/login.keychain-db" || true
 fi
 
-# Build the Copilot CLI command. Try resume-by-name first, fall back to a
-# fresh named session if resume fails (e.g., session doesn't exist yet).
-CMD="$COPILOT_BIN --resume='$NAME' --name='$NAME' --remote || $COPILOT_BIN --name='$NAME' --remote"
+# Build the Copilot CLI command.
+#
+# Session-ID strategy: we want one Copilot session per agent name, with
+# no interactive picker. Copilot CLI accepts --session-id=<uuid> which
+# means "resume by ID, or set the UUID for a new session". So we pick a
+# UUID up front and Copilot does the right thing.
+#
+# UUID resolution, in priority order:
+#   1. Scan ~/.copilot/session-state/*/workspace.yaml for an existing
+#      session whose `name:` matches $NAME exactly. If multiple match
+#      (e.g., legacy duplicates), use the most recently updated one.
+#      This is what lets the wrapper adopt sessions you already had
+#      before installing remote-agent-stack.
+#   2. Otherwise, fall back to a deterministic UUIDv5 derived from the
+#      name, so the first wrapper launch creates a stable UUID and
+#      subsequent launches resume it.
+#
+# `--name=<NAME>` is included so the session shows up under that name in
+# the picker / `--resume=<NAME>` paths too (cosmetic, not required).
+
+UUID=""
+UUID_UPDATED=""
+SESSION_STATE_DIR="$HOME/.copilot/session-state"
+if [ -d "$SESSION_STATE_DIR" ]; then
+  for ws in "$SESSION_STATE_DIR"/*/workspace.yaml; do
+    [ -r "$ws" ] || continue
+    this_name="$(awk -F': ' '/^name: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    [ "$this_name" = "$NAME" ] || continue
+    this_id="$(awk -F': ' '/^id: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    this_updated="$(awk -F': ' '/^updated_at: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    if [ -z "$UUID_UPDATED" ] || [ "$this_updated" \> "$UUID_UPDATED" ]; then
+      UUID="$this_id"
+      UUID_UPDATED="$this_updated"
+    fi
+  done
+fi
+
+if [ -z "$UUID" ]; then
+  UUID="$(python3 -c "import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, 'remote-agent-stack/'+sys.argv[1]))" "$NAME")"
+fi
+
+CMD="$COPILOT_BIN --session-id='$UUID' --name='$NAME' --remote"
 
 exec tmux new-session -s "$NAME" -c "$DIR" \; send-keys "$CMD" Enter
