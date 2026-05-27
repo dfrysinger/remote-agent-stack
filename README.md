@@ -22,6 +22,17 @@ cd ~/code/remote-agent-stack
 ./install.sh
 ```
 
+If you're driving the install **over VNC / Screens / Termius** (anywhere
+the sudo prompt might be hard to see), use the GUI launcher instead —
+it opens a fresh Terminal.app window where the password prompt is
+obvious:
+
+```bash
+open ~/code/remote-agent-stack/install-gui.command
+```
+
+(Or double-click `install-gui.command` in Finder.)
+
 The installer is idempotent — safe to re-run. It prints a checklist of the
 manual GUI / interactive steps it can't perform (Full Disk Access grants,
 `tailscale up --ssh`, first Copilot CLI auth prompt).

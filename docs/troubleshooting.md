@@ -99,21 +99,16 @@ non-interactive shells for `send-keys`.
 
 ## Keychain
 
-### `gh` / `git` say "could not read Username" inside tmux over SSH
+### Credential prompts inside tmux over SSH
 
-The login keychain is locked. The wrapper calls
-`security unlock-keychain` before launching the new tmux session, which
-unlocks for the wrapper's lifetime — but `tmux new-session` daemonizes
-quickly, so the session's keychain context can be wrong.
+The wrapper calls `security unlock-keychain` once before starting the
+new tmux session. That unlocks the login keychain for the whole user
+session, so anything launched inside tmux (`gh`, `git`, `ssh-add`, the
+AWS CLI, Slack tokens, etc.) can read its stored secrets normally.
 
-Workaround if it bites you: run `security unlock-keychain` once inside
-the tmux session (you'll be prompted for your login password); subsequent
-`gh`/`git` calls in that tmux will work.
-
-Better long-term fix: use a credential helper that doesn't need keychain
-unlock — `gh auth login --with-token` from a static file, or `git config
---global credential.helper "store"` (acceptable inside an encrypted home
-on a single-user machine).
+If the keychain re-locks later (e.g., the machine sleeps, or you have a
+short idle-lock policy), just run `security unlock-keychain` once inside
+tmux. Type your login password and you're back in business.
 
 ## Termius
 

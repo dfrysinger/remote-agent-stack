@@ -38,11 +38,28 @@ fi
 
 # ---- args ------------------------------------------------------------------
 
-if [ $# -ne 1 ] || [ -z "${1:-}" ]; then
-  cat <<USAGE >&2
+usage() {
+  cat <<USAGE
 Usage: $(basename "$0") <Name>
+  Launch or reattach to a named Copilot CLI agent session.
+
   Example: $(basename "$0") Alpha
+
+Options:
+  -h, --help   Show this help and exit.
+
+Config:
+  ~/.config/remote-agent-stack/config
+  Env: WORKSPACE_BASE, COPILOT_BIN, AGENT_DIR_PREFIX
 USAGE
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+if [ $# -ne 1 ] || [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
+  usage >&2
   exit 2
 fi
 
