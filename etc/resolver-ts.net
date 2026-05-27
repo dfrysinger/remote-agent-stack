@@ -1,0 +1,10 @@
+# MagicDNS workaround for Homebrew tailscaled on macOS.
+# Tailscale's brew formula doesn't set up a system resolver entry for
+# *.ts.net, so FQDN MagicDNS lookups silently fall through to your
+# regular DNS and return NXDOMAIN. This file routes anything ending in
+# .ts.net to the Tailscale resolver (100.100.100.100).
+#
+# Installed by remote-agent-stack/install.sh to /etc/resolver/ts.net
+nameserver 100.100.100.100
+search_order 1
+timeout 5
