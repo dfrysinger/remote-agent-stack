@@ -191,7 +191,7 @@ if [ ! -f "$CONFIG_DIR/config" ]; then
 # remote-agent-stack — copilot-agent wrapper config
 #
 # WORKSPACE_BASE: where agent working directories live.
-#   Each agent <Name> uses: $WORKSPACE_BASE/agent-<lowercase-name>
+#   Each agent <Name> uses: $WORKSPACE_BASE/agent-<Name>  (case-preserved)
 # WORKSPACE_BASE="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
 
 # COPILOT_BIN: name of the Copilot CLI binary (must be in PATH).

@@ -6,7 +6,8 @@
 #
 # Behavior:
 #   - Resolves <Name> (e.g., Alpha) to a workspace directory:
-#       $WORKSPACE_BASE/agent-<lowercase-name>
+#       $WORKSPACE_BASE/agent-<Name>
+#     (case-preserved; case-sensitive throughout)
 #   - If a tmux session named <Name> exists, attaches to it.
 #   - Otherwise, unlocks the login keychain, creates a new tmux session,
 #     and launches Copilot CLI, attempting to resume an existing session
@@ -64,8 +65,7 @@ if [ $# -ne 1 ] || [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
 fi
 
 NAME="$1"
-LOWER="$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')"
-DIR="$WORKSPACE_BASE/${AGENT_DIR_PREFIX}${LOWER}"
+DIR="$WORKSPACE_BASE/${AGENT_DIR_PREFIX}${NAME}"
 
 # ---- preflight -------------------------------------------------------------
 

@@ -38,4 +38,4 @@ your laptop left mid-thought — provided the Mac hasn't rebooted.
 
 `copilot-agent` accepts any name; the NATO list is convention, not a hard
 requirement. `copilot-agent Coordinator` would Just Work and live at
-`~/Library/CloudStorage/Dropbox/copilot-workspace/agent-coordinator`.
+`~/Library/CloudStorage/Dropbox/copilot-workspace/agent-Coordinator`.

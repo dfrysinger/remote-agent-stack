@@ -45,8 +45,8 @@ copilot-agent Alpha
 ```
 
 Substitute `Bravo`, `Charlie`, etc. for your other agents. Each name maps
-to a workspace directory under `$WORKSPACE_BASE/agent-<lowercase-name>`
-(default: `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-alpha`,
+to a workspace directory under `$WORKSPACE_BASE/agent-<Name>`
+(default: `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-Alpha`,
 etc.) and a tmux session of the same name.
 
 ## How `copilot-agent <Name>` behaves
