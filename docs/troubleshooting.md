@@ -104,6 +104,15 @@ the network entirely. Symptoms of this transition:
 - `tailscaled.log` has zero `handling conn` or `ssh-conn-` lines since startup
 - `tailscale debug netmap` shows `"cap/ssh"` present but `SSHPolicy.Rules` empty
 
+### Tailscale SSH from the host to its own tailnet IP returns "refused"
+
+Expected behavior on macOS — not a bug. `ssh dfrysinger@macbook-air`
+from the same Mac that's hosting tailscaled gets routed through the OS
+network stack (because macOS sees the tailnet IP as a local address on
+the utun interface) instead of through tailscaled's netstack, so it
+never reaches the Tailscale SSH server. Always test from a peer (your
+phone, another laptop) — that's the real network path.
+
 ## tmux
 
 ### Files outside ~/ are "Operation not permitted" inside tmux
