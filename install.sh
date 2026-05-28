@@ -6,7 +6,7 @@
 #   - Homebrew (if missing)
 #   - tmux + tailscale (via brew)
 #   - /etc/resolver/ts.net (MagicDNS fix for Homebrew tailscaled)
-#   - copilot-agent wrapper symlinked into /usr/local/bin
+#   - copilot-agent wrapper symlinked into /usr/local/bin (also as `ca`)
 #
 # All operations that require root are batched into a single sudo
 # invocation, so you only type your password once even on systems where
@@ -279,11 +279,11 @@ cat <<MANUAL
      Answer Yes. The token lands in ~/.copilot/config.json (mode 600).
 
   4. Test:
-       copilot-agent Alpha
+       ca alpha        # (long form: copilot-agent alpha)
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
-       copilot-agent Alpha
-       copilot-agent Bravo
+       ca alpha
+       ca bravo
        ...
 
 MANUAL

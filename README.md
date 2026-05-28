@@ -6,10 +6,10 @@ hooks for adding Claude / Codex later) over Tailscale SSH and tmux.
 
 ## What you get
 
-- A `copilot-agent <Name>` wrapper (also installed as the short alias `ca`)
-  that launches or reattaches to a named agent session — keychain unlock,
-  tmux session management, and `copilot --resume / --name / --remote`
-  plumbing all handled.
+- A `copilot-agent <name>` wrapper (also installed as the short alias
+  `ca`) that launches or reattaches to a named agent session — keychain
+  unlock, tmux session management, and `copilot --resume / --name
+  / --remote` plumbing all handled.
 - A one-shot installer for the OS-level prerequisites: Homebrew, tmux,
   Tailscale, and the MagicDNS resolver fix that Homebrew's Tailscale
   formula leaves out.
@@ -42,22 +42,26 @@ Once the manual steps are done, in any shell on the Mac (including over
 Tailscale SSH, via Termius, etc.):
 
 ```bash
-copilot-agent Alpha     # or just: ca Alpha
+copilot-agent alpha     # or just: ca alpha
 ```
 
-Substitute `Bravo`, `Charlie`, etc. for your other agents. Each name maps
-to a workspace directory under `$WORKSPACE_BASE/agent-<Name>`
-(default: `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-Alpha`,
+Substitute `bravo`, `charlie`, etc. for your other agents. Each name maps
+to a workspace directory under `$WORKSPACE_BASE/agent-<name>`
+(default: `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-alpha`,
 etc.) and a tmux session of the same name.
 
-## How `copilot-agent <Name>` behaves
+Names are case-sensitive end-to-end (workspace dir, tmux session, and
+Copilot session name all match exactly what you type), so pick a casing
+convention and stick with it. Lowercase is what we use.
 
-1. If a tmux session named `<Name>` exists → attach to it.
+## How `copilot-agent <name>` (or `ca <name>`) behaves
+
+1. If a tmux session named `<name>` exists → attach to it.
 2. Otherwise:
    - Unlock the login keychain (so `git`, `gh`, etc. inside the session
      can read their stored credentials).
    - Create a new tmux session in the agent's workspace directory.
-   - Run `copilot --resume='<Name>' --name='<Name>' --remote` inside, or
+   - Run `copilot --resume='<name>' --name='<name>' --remote` inside, or
      fall back to a fresh named session if no prior session matches.
 
 ## Configuration

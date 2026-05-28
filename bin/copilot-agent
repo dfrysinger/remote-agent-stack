@@ -2,13 +2,13 @@
 # copilot-agent — launch or attach to a named Copilot CLI agent session
 #
 # Usage:
-#   copilot-agent <Name>
+#   copilot-agent <name>      (or just: ca <name>)
 #
 # Behavior:
-#   - Resolves <Name> (e.g., Alpha) to a workspace directory:
-#       $WORKSPACE_BASE/agent-<Name>
+#   - Resolves <name> (e.g., alpha) to a workspace directory:
+#       $WORKSPACE_BASE/agent-<name>
 #     (case-preserved; case-sensitive throughout)
-#   - If a tmux session named <Name> exists, attaches to it.
+#   - If a tmux session named <name> exists, attaches to it.
 #   - Otherwise, unlocks the login keychain, creates a new tmux session,
 #     and launches Copilot CLI, attempting to resume an existing session
 #     of the same name (falling back to a fresh named session) with remote
@@ -44,7 +44,7 @@ usage() {
 Usage: $(basename "$0") <Name>
   Launch or reattach to a named Copilot CLI agent session.
 
-  Example: $(basename "$0") Alpha
+  Example: $(basename "$0") alpha
 
 Options:
   -h, --help   Show this help and exit.
