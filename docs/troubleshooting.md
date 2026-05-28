@@ -56,6 +56,54 @@ sudo brew services start tailscale
 sudo tailscale up --ssh
 ```
 
+### Connection refused on `:22` even though `RunSSH=true`
+
+If `tailscale debug prefs` shows `"RunSSH": true` but `nc -v <tailnet-ip>
+22` returns "Connection refused", and `tailscaled.log` shows the daemon
+finishing startup with no SSH-related lines at all, your tailnet ACL is
+missing SSH rules.
+
+Tailscale's SSH server only binds `:22` on the tailnet IP if the
+control-plane-delivered `SSHPolicy` contains at least one rule that
+could apply to the node. Confirm with:
+
+```bash
+sudo tailscale debug netmap | python3 -c \
+  'import json,sys; d=json.load(sys.stdin); p=d.get("SSHPolicy") or {}; \
+   print("rules:", len(p.get("Rules",[])))'
+```
+
+If that prints `rules: 0`, fix it in the ACL editor at
+<https://login.tailscale.com/admin/acls/file>. A minimum rule that lets
+the tailnet owner SSH into their own nodes as any non-root user:
+
+```json
+{
+  "ssh": [
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["autogroup:self"],
+      "users":  ["autogroup:nonroot"]
+    }
+  ]
+}
+```
+
+`tailscaled` picks up the new policy within seconds — no restart needed.
+
+This bites hard when you migrate from "plain SSH over Tailscale" (relies
+on macOS Remote Login + OpenSSH on `:22`) to "Tailscale SSH server"
+(replaces `sshd`). If Remote Login was masking the missing ACL, things
+look fine until something turns Remote Login off — then `:22` falls off
+the network entirely. Symptoms of this transition:
+
+- `ssh user@host` from a peer prints `Connection refused`
+- `tailscale ssh user@host` from the *same* host returns `Connection refused`
+- `nc -v 100.x.x.x 57739` (peerapi) succeeds — proves the tun is up
+- `tailscaled.log` has zero `handling conn` or `ssh-conn-` lines since startup
+- `tailscale debug netmap` shows `"cap/ssh"` present but `SSHPolicy.Rules` empty
+
 ## tmux
 
 ### Files outside ~/ are "Operation not permitted" inside tmux
