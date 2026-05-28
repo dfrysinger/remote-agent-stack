@@ -74,6 +74,10 @@ AGENT_DIR_PREFIX="agent-"
 
 - [docs/termius-snippets.md](docs/termius-snippets.md) — ready-to-paste
   Termius snippets for six NATO-named agents.
+- [docs/local-terminal-setup.md](docs/local-terminal-setup.md) — running
+  6-10 simultaneous agents from a Mac: iTerm2 / WezTerm setup, tmux
+  activity monitoring, the one config line that makes "which agent
+  wants attention" obvious at a glance.
 - [docs/fda-grants.md](docs/fda-grants.md) — exactly which binaries need
   Full Disk Access on macOS Ventura+ and why.
 - [docs/troubleshooting.md](docs/troubleshooting.md) — every macOS /
