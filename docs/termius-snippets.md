@@ -44,25 +44,43 @@ your laptop left mid-thought — provided the Mac hasn't rebooted.
 requirement. `copilot-agent coordinator` would Just Work and live at
 `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-coordinator`.
 
-## Using Termius locally on the Mac (no SSH)
+## Using Termius locally on the Mac
 
-Termius on macOS can also drive your Mac directly without going through
-SSH — handy if you want one Termius UI for both local and remote work.
-Create one **Local Terminal** host per agent and let snippets auto-run
-on connect:
+Termius doesn't support per-host "local terminal" entries the way it
+does for SSH — you can't make an `alpha-local` host that double-clicks
+into `copilot-agent alpha`. A couple of things to know:
 
-1. Termius → **New Host** → choose **Local Terminal** (Termius Mac app
-   only — the iOS app doesn't have this).
-2. **Label**: `alpha-local` (or whatever you want it to show as).
-3. **Startup snippet** (or "Run command after connect", depending on
-   Termius version): paste your saved `Agent alpha` snippet, or inline
-   `copilot-agent alpha`.
-4. Save. Double-click the host → Termius spawns a local zsh, runs the
-   snippet, drops you in the live agent session.
+- **Mac App Store Termius is sandboxed** and has no local terminal at
+  all. To get any local-terminal feature, install the direct-download
+  build from <https://termius.com/download>.
+- Even in the direct-download build, the local terminal is a single
+  pane opened with `Cmd+L`. It doesn't auto-run snippets. You'd
+  manually trigger a snippet from the snippet picker after it opens.
 
-Repeat per agent. On the Mac itself you now have six entries that go
-straight into `copilot-agent <name>` with no SSH hop. On your phone you
-still use the SSH host pointed at `macbook-air` and the same snippets.
+If you want one-click access to each agent from Termius on the Mac
+itself, your two realistic options:
+
+1. **Cmd+L → run snippet** — open local terminal, hit your snippet
+   picker shortcut, choose "Agent alpha". Two-step but uses Termius's
+   own UI and saved snippets.
+2. **Re-enable macOS Remote Login** and SSH from Termius to
+   `localhost`/`127.0.0.1`. Same Termius UX as your phone (one-click
+   host with startup snippet), but you're routing through OpenSSH
+   instead of just spawning a shell — wasted hop, and you're back to
+   needing Remote Login on. Not recommended unless you really want the
+   same flow everywhere.
+
+If a true one-click "double-click to land in agent alpha" matters more
+than staying inside Termius, the simplest answer is `Terminal.app` with
+a `.command` file per agent — drag them into the Dock and click. A
+one-liner script per agent:
+
+```bash
+#!/bin/bash
+exec /usr/local/bin/copilot-agent alpha
+```
+
+Save as `~/Applications/Agent Alpha.command`, `chmod +x`, drag to Dock.
 
 If `copilot-agent` isn't found inside Termius's local shell, your
 non-login shell PATH is missing `/usr/local/bin`. Easiest fix:
