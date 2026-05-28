@@ -6,9 +6,10 @@ hooks for adding Claude / Codex later) over Tailscale SSH and tmux.
 
 ## What you get
 
-- A `copilot-agent <Name>` wrapper that launches or reattaches to a named
-  agent session — keychain unlock, tmux session management, and `copilot
-  --resume / --name / --remote` plumbing all handled.
+- A `copilot-agent <Name>` wrapper (also installed as the short alias `ca`)
+  that launches or reattaches to a named agent session — keychain unlock,
+  tmux session management, and `copilot --resume / --name / --remote`
+  plumbing all handled.
 - A one-shot installer for the OS-level prerequisites: Homebrew, tmux,
   Tailscale, and the MagicDNS resolver fix that Homebrew's Tailscale
   formula leaves out.
@@ -41,7 +42,7 @@ Once the manual steps are done, in any shell on the Mac (including over
 Tailscale SSH, via Termius, etc.):
 
 ```bash
-copilot-agent Alpha
+copilot-agent Alpha     # or just: ca Alpha
 ```
 
 Substitute `Bravo`, `Charlie`, etc. for your other agents. Each name maps

@@ -21,6 +21,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WRAPPER_SRC="$REPO_ROOT/bin/copilot-agent"
 WRAPPER_DST="/usr/local/bin/copilot-agent"
+WRAPPER_SHORT_DST="/usr/local/bin/ca"
 RESOLVER_SRC="$REPO_ROOT/etc/resolver-ts.net"
 RESOLVER_DST="/etc/resolver/ts.net"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/remote-agent-stack"
@@ -119,6 +120,14 @@ else
   NEED_SYMLINK=true
 fi
 
+if [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ]; then
+  :  # already correct
+elif [ -e "$WRAPPER_SHORT_DST" ]; then
+  warn "$WRAPPER_SHORT_DST already exists (points elsewhere or is not ours) — leaving it alone (skipping 'ca' shortcut)"
+else
+  NEED_SYMLINK=true
+fi
+
 # Ensure the wrapper is executable (no sudo needed).
 chmod +x "$WRAPPER_SRC"
 
@@ -132,7 +141,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   $NEED_TAILSCALED_START   && echo "    • start tailscaled (brew services start tailscale)"
   $NEED_RESOLVER_WRITE     && echo "    • write $RESOLVER_DST (MagicDNS resolver)"
   $NEED_USRLOCALBIN_MKDIR  && echo "    • create /usr/local/bin"
-  $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST -> $WRAPPER_SRC"
+  $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST and $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
   echo
   echo "  ============================================================"
   echo "  >>>  Enter your login password at the prompt below.       <<<"
@@ -149,8 +158,9 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   RESOLVER_DST="$RESOLVER_DST" \
   WRAPPER_SRC="$WRAPPER_SRC" \
   WRAPPER_DST="$WRAPPER_DST" \
+  WRAPPER_SHORT_DST="$WRAPPER_SHORT_DST" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -170,6 +180,15 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
       echo "  → symlinking $WRAPPER_DST"
       rm -f "$WRAPPER_DST"
       ln -s "$WRAPPER_SRC" "$WRAPPER_DST"
+
+      # Short 'ca' alias: only create/replace if absent, or already a symlink
+      # pointing at THIS wrapper. Leave any pre-existing real file OR foreign
+      # symlink alone (collision avoidance).
+      if [ ! -e "$WRAPPER_SHORT_DST" ] || { [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ]; }; then
+        echo "  → symlinking $WRAPPER_SHORT_DST"
+        rm -f "$WRAPPER_SHORT_DST"
+        ln -s "$WRAPPER_SRC" "$WRAPPER_SHORT_DST"
+      fi
     fi
 PRIVILEGED_BLOCK
 
@@ -177,6 +196,7 @@ PRIVILEGED_BLOCK
   $NEED_RESOLVER_WRITE     && ok "$RESOLVER_DST written" || true
   $NEED_USRLOCALBIN_MKDIR  && ok "/usr/local/bin created" || true
   $NEED_SYMLINK            && ok "$WRAPPER_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
 else
   ok "nothing to do (system already configured)"
 fi

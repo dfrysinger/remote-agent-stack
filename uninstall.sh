@@ -3,6 +3,7 @@
 #
 # Removes the userland artifacts installed by install.sh:
 #   - /usr/local/bin/copilot-agent symlink
+#   - /usr/local/bin/ca symlink (short alias)
 #   - /etc/resolver/ts.net
 #
 # Does NOT uninstall Homebrew packages (tmux, tailscale) — those may be
@@ -12,6 +13,9 @@
 # Does NOT remove ~/.config/remote-agent-stack/ unless --purge is given.
 
 set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+WRAPPER_SRC="$REPO_ROOT/bin/copilot-agent"
 
 PURGE=false
 for arg in "$@"; do
@@ -33,6 +37,22 @@ if [ -L /usr/local/bin/copilot-agent ] || [ -e /usr/local/bin/copilot-agent ]; t
   ok "removed"
 else
   skip "/usr/local/bin/copilot-agent not present"
+fi
+
+bold "Removing 'ca' short alias"
+# Only remove the link if it points at THIS clone's wrapper (exact absolute
+# match). Anything else — a foreign tool's symlink, a hand-rolled alias, a
+# real file — is left alone.
+if [ -L /usr/local/bin/ca ] && [ "$(readlink /usr/local/bin/ca)" = "$WRAPPER_SRC" ]; then
+  todo "sudo rm /usr/local/bin/ca"
+  sudo rm -f /usr/local/bin/ca
+  ok "removed"
+elif [ -L /usr/local/bin/ca ]; then
+  skip "/usr/local/bin/ca symlinks to $(readlink /usr/local/bin/ca) — not ours, leaving alone"
+elif [ -e /usr/local/bin/ca ]; then
+  skip "/usr/local/bin/ca exists and is not our symlink — leaving it alone"
+else
+  skip "/usr/local/bin/ca not present"
 fi
 
 bold "Removing MagicDNS resolver"
