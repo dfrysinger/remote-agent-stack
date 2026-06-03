@@ -18,7 +18,7 @@ hooks for adding Claude / Codex later) over Tailscale SSH and tmux.
 ## Quick start
 
 ```bash
-git clone <this-repo> ~/code/remote-agent-stack
+git clone https://github.com/dfrysinger/remote-agent-stack ~/code/remote-agent-stack
 cd ~/code/remote-agent-stack
 ./install.sh
 ```
