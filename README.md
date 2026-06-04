@@ -285,20 +285,13 @@ Store](https://apps.apple.com/us/app/termius-ssh-client/id549039908).
 Sign in with the same account you'll use on the Mac desktop client
 (this enables Termius Sync, optional but convenient).
 
-### 2.3 — Find your Mac's tailnet FQDN
+### 2.3 — Copy your Mac's tailnet FQDN
 
-You'll need this for the host config. From the Mac:
-
-```bash
-tailscale status --self --json | python3 -c \
-  'import json,sys; d=json.load(sys.stdin); \
-   print(d["Self"]["DNSName"].rstrip("."))'
-```
-
-That prints something like `macbook-air.tail-xxxx.ts.net`. (You can
-also find it in the [Tailscale admin Machines
-page](https://login.tailscale.com/admin/machines) under your Mac's
-name.) Copy it; you'll paste it into Termius next.
+In the iOS Tailscale app, tap your Mac in the device list. Its
+MagicDNS name appears at the top of the detail screen with a copy
+button next to it — tap it. You now have something like
+`macbook-air.tail-xxxx.ts.net` on your clipboard, ready to paste into
+Termius next.
 
 ### 2.4 — Create a "Mac" host group
 
