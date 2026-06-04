@@ -120,10 +120,7 @@ The result: rebooting the Mac auto-resumes an indefinite caffeine
 session, the display still sleeps and locks, but the system never
 suspends — so the tailnet stays online and `tmux` sessions stay alive.
 
-<!-- SCREENSHOT: Amphetamine Quick Settings panel showing the four
-     toggles above + "New session at app launch" + "Indefinitely"
-     selected. -->
-
+![Amphetamine Quick Settings showing Allow display sleep ON, Allow system sleep when display is closed OFF, Allow screen saver after 45m of inactivity ON, with "New session at app launch" set to Indefinitely.](docs/images/amphetamine-quick-settings.png)
 ### 1.3 — Clone and run the installer
 
 ```bash
@@ -228,17 +225,37 @@ FileVault-encrypted home volume. The risk delta over the keychain is
 small; the operational benefit (Copilot CLI just works over SSH) is
 large.
 
-### 1.8 — Test the wrapper locally
+### 1.8 — (Optional) Pick where workspaces live
+
+By default, `ca <name>` puts each agent's workspace at
+`~/Library/CloudStorage/Dropbox/copilot-workspace/agent-<name>/`. The
+Dropbox path is convenient if you want workspaces synced across
+machines, but it requires Dropbox installed and signed in. **If you
+don't use Dropbox**, override the location before your first launch:
+
+```bash
+mkdir -p ~/.config/remote-agent-stack
+cat >> ~/.config/remote-agent-stack/config <<'EOF'
+WORKSPACE_BASE="$HOME/copilot-workspace"
+EOF
+```
+
+Use any path you like — `$HOME/code`, an iCloud Drive path, an
+external drive, etc. The wrapper creates `agent-<name>/` under
+whatever you set. (You can change this later, but you'll have to move
+existing workspace dirs by hand.)
+
+### 1.9 — Test the wrapper locally
 
 ```bash
 ca alpha
 ```
 
-You should land inside a `tmux` session named `alpha`, in the workspace
-directory `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-alpha/`,
-with Copilot CLI running. Detach with `Ctrl-b d` (you're back at the
-Mac shell). Reattach with `ca alpha` again — should be instant. Now
-the Mac side is done.
+You should land inside a `tmux` session named `alpha`, in
+`$WORKSPACE_BASE/agent-alpha/` (the Dropbox path by default), with
+Copilot CLI running. Detach with `Ctrl-b d` (you're back at the Mac
+shell). Reattach with `ca alpha` again — should be instant. Now the
+Mac side is done.
 
 ---
 
@@ -376,16 +393,20 @@ dragging a tab into the body of another tab's window:
    press `⌘L`. A local shell tab opens.
 2. **Open a second local terminal in a new tab in the same window**:
    `⌘L` again.
+
+   ![Termius desktop with two local-terminal tabs in the same window — "Local Terminal" (active) and "Local Terminal (1)" — the pre-workspace state.](docs/images/termius-desktop-two-tabs.png)
+
 3. **Drag-drop to form the workspace**: select one of the tabs, then
    drag the *unselected* tab into the body of the window. A drop-zone
    box appears; release. You now have a tiled workspace with two
    panes.
+
+   ![Termius desktop mid-drag: a floating "Local Terminal (1)" tab is being dragged over the body of the existing terminal, with a tinted drop-zone overlay showing where the new pane will land.](docs/images/termius-desktop-drag-drop.png)
+
 4. **Save the workspace**: tap the small dot in the workspace tab's
    header. Right-click the tab to rename it (e.g., `Agents`).
 
-   <!-- SCREENSHOT: Termius desktop showing a 2-pane workspace, with
-        a red arrow pointing at the "tiny dot" save button on the
-        workspace tab. -->
+   ![Termius desktop after the drop: a single "Workspace" tab now contains two stacked panes ("Local Terminal (1)" on top, "Local Terminal" on the bottom). The small unfilled dot next to the "Workspace" tab title is the unsaved-changes indicator — click it to save.](docs/images/termius-desktop-workspace-formed.png)
 
 5. **Add more panes**: open another `⌘L` tab, drag-drop into the
    workspace body to add a third pane. Repeat until you have one pane
@@ -398,14 +419,13 @@ By default the panes have generic names. To rename:
 1. Click the **focus mode** button in the top-right of any terminal
    card (next to the X). This expands the card and reveals a left
    panel listing every named local-shell session in the workspace.
+
+   ![Termius desktop in focus mode: the left "Terminals · 2" side panel lists "Local Terminal (1)" and "Local Terminal" entries; the active terminal fills the right side. Right-click a session name in this side panel to rename it.](docs/images/termius-desktop-focus-mode.png)
+
 2. **Right-click a session name in the side panel** → **Rename** →
    give it the agent name (`alpha`, `bravo`, …).
 3. Click the **split-view** button at the top-right of the side panel
    to return to the grid view of all panes.
-
-   <!-- SCREENSHOT: Termius desktop in focus mode showing the
-        left side panel of session names with a right-click context
-        menu open over one entry, "Rename" highlighted. -->
 
 4. **Save again** (the tiny dot on the workspace tab).
 
@@ -465,7 +485,8 @@ next launch, so the Copilot CLI conversation comes back; only the
 ## Configuration
 
 Defaults live in `~/.config/remote-agent-stack/config` (created on
-first install). Override any of:
+first install). The defaults below are what you get if you don't
+override anything:
 
 ```sh
 WORKSPACE_BASE="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
@@ -473,8 +494,14 @@ COPILOT_BIN="copilot"
 AGENT_DIR_PREFIX="agent-"
 ```
 
+`WORKSPACE_BASE` defaults to a Dropbox path so that workspaces sync
+across multiple Macs out of the box. If you don't use Dropbox, set it
+to anything you like — `$HOME/copilot-workspace`, `$HOME/code`, an
+iCloud Drive path, etc. See [§1.8](#18--optional-pick-where-workspaces-live)
+for the recommended one-time setup.
+
 To use a different agent backend (Claude Code, Codex CLI), point
-`COPILOT_BIN` at its launcher and adjust the resume flags inside
+`COPILOT_BIN` at its launcher and adjust the session-id flags inside
 `bin/copilot-agent`. First-class support for those backends is on the
 roadmap — see [Status](#status--roadmap).
 

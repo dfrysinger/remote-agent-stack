@@ -19,9 +19,6 @@ If you don't have a Tailscale account yet:
    `tail-xxxx.ts.net` (Tailscale picks the name; you can rename it
    under [DNS settings](https://login.tailscale.com/admin/dns)).
 
-<!-- SCREENSHOT: Tailscale admin DNS page showing the tailnet name and
-     "Use HTTPS" / "MagicDNS" toggles, both ON. -->
-
 ## 2. Verify MagicDNS is on
 
 [MagicDNS](https://tailscale.com/kb/1081/magicdns) is what makes
@@ -31,9 +28,12 @@ enabled by default — you just need to confirm:
 
 1. Go to <https://login.tailscale.com/admin/dns>.
 2. Confirm **MagicDNS** is on. If it's off (rare on a new tailnet),
-   toggle it on.
+   toggle it on. If it's already on, the section will offer a
+   **Disable MagicDNS…** button — that means you're good.
 3. (Recommended) Toggle **HTTPS Certificates** on — needed if you ever
    want a real TLS cert for a service on a tailnet host.
+
+![Tailscale admin DNS page. The "Tailnet DNS name" section shows the auto-generated name (e.g., hornbill-dragon.ts.net), with a "Rename tailnet…" button. The Nameservers section lists the MagicDNS server (100.100.100.100). The MagicDNS section near the bottom shows a "Disable MagicDNS…" button — meaning MagicDNS is currently enabled.](images/tailscale-admin-dns.png)
 
 ## 3. Install Tailscale on the Mac (Homebrew CLI build, not the GUI)
 
@@ -133,8 +133,7 @@ iOS Tailscale doesn't need any further configuration — once the toggle
 is on, `macbook-air.tail-xxxx.ts.net` resolves and Termius can connect
 to it.
 
-<!-- SCREENSHOT: iPhone Tailscale app showing the connect toggle ON
-     and the Mac listed as an online peer. -->
+![iPhone Tailscale app: tailnet ("frysinger.net") with the connect toggle ON ("Connected"), and a list of tailnet machines (iphone, jetkvm, mac-mini, macbook-air) each with their 100.x.x.x tailnet IP. The macbook-air entry has a green "online" dot.](images/tailscale-ios-app.png)
 
 ## Troubleshooting
 
