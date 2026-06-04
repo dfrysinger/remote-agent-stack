@@ -394,7 +394,7 @@ dragging a tab into the body of another tab's window:
 
 By default the panes have generic names. To rename:
 
-1. Click the **fullscreen** button in the top-right of any terminal
+1. Click the **focus mode** button in the top-right of any terminal
    card (next to the X). This expands the card and reveals a left
    panel listing every named local-shell session in the workspace.
 2. **Right-click a session name in the side panel** → **Rename** →
@@ -402,7 +402,7 @@ By default the panes have generic names. To rename:
 3. Click the **split-view** button at the top-right of the side panel
    to return to the grid view of all panes.
 
-   <!-- SCREENSHOT: Termius desktop in fullscreen view showing the
+   <!-- SCREENSHOT: Termius desktop in focus mode showing the
         left side panel of session names with a right-click context
         menu open over one entry, "Rename" highlighted. -->
 
