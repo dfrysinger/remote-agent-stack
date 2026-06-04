@@ -294,15 +294,17 @@ Termius next.
 
 ### 2.4 — Create a "Mac" host group
 
-A host group lets every Agent host inherit shared SSH config (address,
-username) so you only have one place to fix things. Termius docs:
-<https://docs.termius.com/termius-handbook/host-groups>.
+A host group lets every Agent host inherit shared SSH credentials
+(username, optional password) so you only have one place to fix
+things. Per [Termius's docs on
+groups](https://docs.termius.com/organize-and-connect-to-hosts/groups-and-tags),
+groups inherit credentials, snippets, protocols, environment, and
+themes — **but not the address**, which is always set per host.
 
 1. Termius → **Hosts** → **+** → **New Group**.
 2. Name it `Mac`.
-3. Set group-level SSH defaults:
-   - **Address**: the FQDN from 2.3
-     (`macbook-air.tail-xxxx.ts.net`).
+3. Toggle **SSH** on at the group level so the credential fields
+   appear, then set:
    - **Username**: your macOS username (whatever `whoami` prints on
      the Mac). This **must** be a real user — Tailscale SSH checks it
      against the ACL, and a wrong/blank username is what causes the
@@ -317,19 +319,23 @@ username) so you only have one place to fix things. Termius docs:
        `sudo` asks.
 4. Save.
 
-<!-- SCREENSHOT: iOS Termius "New Group" sheet with Address / Username
-     fields filled in. -->
+<!-- SCREENSHOT: iOS Termius "New Group" sheet with the SSH toggle on
+     and Username filled in. -->
 
 ### 2.5 — Create one host per agent
 
 For each agent name (`alpha`, `bravo`, `charlie`, …):
 
 1. Termius → **Hosts** → **+** → **New Host**.
-2. **Parent Group**: `Mac` (the group you just created — host inherits
-   address, username, and saved password from it).
-3. **Label**: `Agent alpha` (or whatever you want to see in the host
+2. **Address**: the FQDN from 2.3
+   (`macbook-air.tail-xxxx.ts.net`). This is per-host on iOS — the
+   group can't set it for you.
+3. **Parent Group**: `Mac`. The host will show "Inherited from group"
+   under the credential fields; leave those blank to use the group's
+   username and password.
+4. **Label**: `Agent alpha` (or whatever you want to see in the host
    list).
-4. **Startup snippet**: tap **Startup Snippet**, then **Add new
+5. **Startup snippet**: tap **Startup Snippet**, then **Add new
    snippet**. Enter:
 
    ```
@@ -339,11 +345,11 @@ For each agent name (`alpha`, `bravo`, `charlie`, …):
    Name the snippet `Agent alpha` (or whatever you want), save, and
    it'll be selected as the host's startup snippet. Termius docs on
    snippets: <https://docs.termius.com/termius-handbook/snippets>.
-5. Save the host.
+6. Save the host.
 
 Repeat for each agent. The host list now has `Agent alpha`, `Agent
-bravo`, etc., all inheriting from the Mac group, each running a
-different one-line snippet on connect.
+bravo`, etc., all inheriting credentials from the Mac group, each with
+the same address and a different one-line startup snippet.
 
 <!-- SCREENSHOT: iOS Termius host list showing "Agent ..." rows under
      the "Mac" group. -->
