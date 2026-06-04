@@ -22,14 +22,16 @@ If you don't have a Tailscale account yet:
 <!-- SCREENSHOT: Tailscale admin DNS page showing the tailnet name and
      "Use HTTPS" / "MagicDNS" toggles, both ON. -->
 
-## 2. Enable MagicDNS
+## 2. Verify MagicDNS is on
 
 [MagicDNS](https://tailscale.com/kb/1081/magicdns) is what makes
 `macbook-air.tail-xxxx.ts.net` and the short name `macbook-air`
-resolve from anywhere in your tailnet.
+resolve from anywhere in your tailnet. New tailnets ship with MagicDNS
+enabled by default — you just need to confirm:
 
 1. Go to <https://login.tailscale.com/admin/dns>.
-2. Toggle **MagicDNS** on.
+2. Confirm **MagicDNS** is on. If it's off (rare on a new tailnet),
+   toggle it on.
 3. (Recommended) Toggle **HTTPS Certificates** on — needed if you ever
    want a real TLS cert for a service on a tailnet host.
 

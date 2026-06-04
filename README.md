@@ -94,9 +94,10 @@ part runs once, on the Mac itself.
 
 If you already have a tailnet, skip ahead. Otherwise: sign up at
 <https://login.tailscale.com/start> (free personal plan is enough),
-then turn on **MagicDNS** at
-<https://login.tailscale.com/admin/dns>. The full Tailscale walkthrough
-is [`docs/tailscale.md`](docs/tailscale.md).
+then confirm **MagicDNS** is on at
+<https://login.tailscale.com/admin/dns> (it's on by default for new
+tailnets — just verify). The full Tailscale walkthrough is
+[`docs/tailscale.md`](docs/tailscale.md).
 
 ### 1.2 — Keep the Mac awake
 
