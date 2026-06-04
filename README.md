@@ -83,13 +83,11 @@ part runs once, on the Mac itself.
 > **Auth model heads-up:** this stack uses [Tailscale
 > SSH](https://tailscale.com/kb/1193/tailscale-ssh), which authenticates
 > by tailnet identity — server-side, the SSH server uses auth method
-> `none` and trusts the tailnet for identity. **But Termius iOS still
-> requires a username and a non-empty password field** before it will
-> attempt the connection (a Termius UI restriction, not a Tailscale
-> requirement). The actual value of the password is ignored by the
-> Tailscale SSH server. The username field, on the other hand, has to
-> match the macOS user the ACL allows (`autogroup:nonroot` in the rule
-> below means "any non-root user").
+> `none` and trusts the tailnet for identity. The username field on the
+> host has to match a real macOS user that the ACL allows
+> (`autogroup:nonroot` in the rule below means "any non-root user"). The
+> password field can be left blank; if you do save a value, it's sent on
+> the wire but ignored by the Tailscale SSH server.
 
 ### 1.1 — Tailscale account
 
@@ -306,13 +304,11 @@ username) so you only have one place to fix things. Termius docs:
    - **Address**: the FQDN from 2.3
      (`macbook-air.tail-xxxx.ts.net`).
    - **Username**: your macOS username (whatever `whoami` prints on
-     the Mac). This has to match the user the Tailscale ACL allows.
-   - **Password**: type any non-empty string — Termius iOS won't
-     attempt a connection with a blank password and no key, but the
-     value is ignored server-side by Tailscale SSH. (Empirically: if
-     you remove both the password and any saved key, Termius prompts
-     for credentials at connect time and fails with "connection
-     failed" if you submit blanks.) `tailscale-placeholder` is fine.
+     the Mac). This **must** be a real user — Tailscale SSH checks it
+     against the ACL, and a wrong/blank username is what causes the
+     "connection failed" prompt loop.
+   - **Password**: leave it blank. Tailscale SSH authenticates by
+     tailnet identity; if you do save a value, it's sent but ignored.
 4. Save.
 
 <!-- SCREENSHOT: iOS Termius "New Group" sheet with Address / Username
@@ -347,9 +343,9 @@ different one-line snippet on connect.
 ### 2.6 — Tap and go
 
 Tap `Agent alpha`. Termius connects over Tailscale SSH (the iPhone's
-tailnet identity is what authenticates server-side — the placeholder
-password you saved is sent but ignored), lands in the Mac shell, runs
-`ca alpha`, and you're in the agent's `tmux` session. Detach with `Ctrl-b d`, kill the
+tailnet identity is what authenticates server-side — no password or
+key needed), lands in the Mac shell, runs `ca alpha`, and you're in
+the agent's `tmux` session. Detach with `Ctrl-b d`, kill the
 Termius tab, and reattach later from the same host (or from a
 different device entirely) — the `tmux` session keeps running on the
 Mac.

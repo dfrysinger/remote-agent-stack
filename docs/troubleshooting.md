@@ -169,28 +169,20 @@ tmux. Type your login password and you're back in business.
 
 ## Termius
 
-### Termius iOS prompts for credentials at connect, fails when fields are blank
+### Termius iOS connection prompt loops / "connection failed"
 
 Symptom: tapping a host on Termius iOS pops a "Username / Password /
-Key" prompt mid-connection. Submitting blanks gives "connection
+Key" prompt mid-connection, and submitting blanks gives "connection
 failed."
 
-Cause: Termius iOS won't initiate an SSH session unless the host
-config has a username **and** at least one of password or key
-populated, even when the server uses Tailscale SSH (which advertises
-auth method `none` and authenticates by tailnet identity, ignoring
-whatever credential the client sends).
+Cause: the **username** on the host config is empty or doesn't match a
+real macOS user. Tailscale SSH authenticates by tailnet identity, but
+the username still has to map to a real OS user the ACL allows
+(`autogroup:nonroot` covers any non-root user).
 
-Fix: in the host (or the Mac host group), set:
-
-- **Username**: your real macOS username (must match the user the
-  Tailscale ACL allows).
-- **Password**: any non-empty placeholder string. The value is sent on
-  the wire but ignored by the Tailscale SSH server.
-
-Don't generate or install an SSH key for this — it's also ignored
-server-side, and a key can be left unset as long as the password field
-has a value.
+Fix: set the username on the host (or its Mac group) to the value
+`whoami` prints on the Mac. The password field can stay blank —
+Tailscale SSH ignores it.
 
 ### Pasting from phone corrupts multi-line snippets with null bytes
 
