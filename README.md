@@ -325,8 +325,8 @@ username) so you only have one place to fix things. Termius docs:
 For each agent name (`alpha`, `bravo`, `charlie`, …):
 
 1. Termius → **Hosts** → **+** → **New Host**.
-2. **Group**: Mac (the group you just created — host inherits address
-   and username from it).
+2. **Parent Group**: `Mac` (the group you just created — host inherits
+   address, username, and saved password from it).
 3. **Label**: `Agent alpha` (or whatever you want to see in the host
    list).
 4. **Startup snippet**: tap **Startup Snippet**, then **Add new
