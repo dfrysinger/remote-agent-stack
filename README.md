@@ -225,25 +225,32 @@ FileVault-encrypted home volume. The risk delta over the keychain is
 small; the operational benefit (Copilot CLI just works over SSH) is
 large.
 
-### 1.8 — (Optional) Pick where workspaces live
+### 1.8 — Workspace location
 
-By default, `ca <name>` puts each agent's workspace at
-`~/Library/CloudStorage/Dropbox/copilot-workspace/agent-<name>/`. The
-Dropbox path is convenient if you want workspaces synced across
-machines, but it requires Dropbox installed and signed in. **If you
-don't use Dropbox**, override the location before your first launch:
+The installer asks where agent workspaces should live (one directory
+per agent — e.g., `agent-alpha/`, `agent-bravo/` — under a parent base
+directory). It auto-picks a smart default and lets you override:
+
+- **If you have Dropbox installed**, the default is
+  `~/Library/CloudStorage/Dropbox/copilot-workspace` — workspaces sync
+  across all your Macs out of the box.
+- **If you don't have Dropbox**, the default is
+  `~/copilot-workspace`.
+
+Press Enter to accept the default, or type any path you like (`~`,
+`$HOME`, and shell expansions all work). Re-running `install.sh` later
+keeps your existing choice and skips the prompt.
+
+To pick a path non-interactively (or from a script):
 
 ```bash
-mkdir -p ~/.config/remote-agent-stack
-cat >> ~/.config/remote-agent-stack/config <<'EOF'
-WORKSPACE_BASE="$HOME/copilot-workspace"
-EOF
+./install.sh --workspace-base ~/code/copilot-workspace
 ```
 
-Use any path you like — `$HOME/code`, an iCloud Drive path, an
-external drive, etc. The wrapper creates `agent-<name>/` under
-whatever you set. (You can change this later, but you'll have to move
-existing workspace dirs by hand.)
+This writes `WORKSPACE_BASE="…"` into
+`~/.config/remote-agent-stack/config`. Edit that file directly any
+time to move the workspace base later (you'll have to move existing
+`agent-<name>/` directories by hand).
 
 ### 1.9 — Test the wrapper locally
 
@@ -252,7 +259,7 @@ ca alpha
 ```
 
 You should land inside a `tmux` session named `alpha`, in
-`$WORKSPACE_BASE/agent-alpha/` (the Dropbox path by default), with
+`$WORKSPACE_BASE/agent-alpha/` (whatever path you picked in 1.8), with
 Copilot CLI running. Detach with `Ctrl-b d` (you're back at the Mac
 shell). Reattach with `ca alpha` again — should be instant. Now the
 Mac side is done.
@@ -484,21 +491,20 @@ next launch, so the Copilot CLI conversation comes back; only the
 
 ## Configuration
 
-Defaults live in `~/.config/remote-agent-stack/config` (created on
-first install). The defaults below are what you get if you don't
-override anything:
+Defaults live in `~/.config/remote-agent-stack/config`, which the
+installer writes for you (see [§1.8](#18--workspace-location)). The
+file looks roughly like:
 
 ```sh
-WORKSPACE_BASE="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
-COPILOT_BIN="copilot"
-AGENT_DIR_PREFIX="agent-"
+WORKSPACE_BASE="/Users/you/copilot-workspace"   # set during install
+# COPILOT_BIN="copilot"
+# AGENT_DIR_PREFIX="agent-"
 ```
 
-`WORKSPACE_BASE` defaults to a Dropbox path so that workspaces sync
-across multiple Macs out of the box. If you don't use Dropbox, set it
-to anything you like — `$HOME/copilot-workspace`, `$HOME/code`, an
-iCloud Drive path, etc. See [§1.8](#18--optional-pick-where-workspaces-live)
-for the recommended one-time setup.
+`WORKSPACE_BASE` is whatever you picked at install time (the installer
+auto-defaults to the Dropbox path if Dropbox is installed, otherwise
+`$HOME/copilot-workspace`). Re-run `./install.sh --workspace-base
+PATH` or edit the file directly to move it.
 
 To use a different agent backend (Claude Code, Codex CLI), point
 `COPILOT_BIN` at its launcher and adjust the session-id flags inside
