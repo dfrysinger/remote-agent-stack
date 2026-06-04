@@ -87,10 +87,22 @@ if ! command -v "$COPILOT_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
+# ---- mailbox poke resolver -------------------------------------------------
+# Mailbox skill (dfrysinger/skills) lives in the plugin install path once
+# installed; fall back to local-dev paths. Empty if not installed.
+
+MAILBOX_POKE=""
+for _p in \
+  "$HOME/.copilot/installed-plugins/_direct/dfrysinger--skills/skills/mailbox/scripts/mailbox-poke.sh" \
+  "$HOME/code/skills/skills/mailbox/scripts/mailbox-poke.sh" \
+  "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh"; do
+  [ -x "$_p" ] && { MAILBOX_POKE="$_p"; break; }
+done
+
 # ---- attach if session exists ---------------------------------------------
 
 if tmux has-session -t "$NAME" 2>/dev/null; then
-  [ -x "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" ] && ( "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" "$NAME" ) &
+  [ -n "$MAILBOX_POKE" ] && ( "$MAILBOX_POKE" "$NAME" ) &
   exec tmux attach -t "$NAME"
 fi
 
@@ -145,5 +157,5 @@ fi
 
 CMD="$COPILOT_BIN --session-id='$UUID' --name='$NAME' --remote"
 
-[ -x "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" ] && ( "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" "$NAME" --wait ) &
+[ -n "$MAILBOX_POKE" ] && ( "$MAILBOX_POKE" "$NAME" --wait ) &
 exec tmux new-session -s "$NAME" -c "$DIR" \; send-keys "$CMD" Enter
