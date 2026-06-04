@@ -263,6 +263,21 @@ Copilot CLI running. Detach with `Ctrl-b d` (you're back at the Mac
 shell). Reattach with `ca alpha` again — should be instant. Now the
 Mac side is done.
 
+### 1.10 — Optional: install Open Markdown
+
+Copilot CLI sessions write a lot of Markdown to disk —
+`~/.copilot/session-state/<uuid>/plan.md`, per-session checkpoints,
+files in `files/`. [Open
+Markdown](https://ptheofan.github.io/open-markdown/) is a free native
+macOS viewer that renders GitHub-flavored Markdown with live reload,
+Mermaid diagrams, syntax highlighting, and inline editing. It's the
+nicest way to skim what an agent has been writing without leaving the
+Mac.
+
+Install from <https://ptheofan.github.io/open-markdown/>, then in
+Finder right-click any `.md` file → **Open With** → **Open Markdown**
+→ **Always Open With** to make it the default.
+
 ---
 
 ## Part 2 — iPhone (Termius iOS)
