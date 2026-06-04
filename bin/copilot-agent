@@ -90,6 +90,7 @@ fi
 # ---- attach if session exists ---------------------------------------------
 
 if tmux has-session -t "$NAME" 2>/dev/null; then
+  [ -x "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" ] && ( "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" "$NAME" ) &
   exec tmux attach -t "$NAME"
 fi
 
@@ -144,4 +145,5 @@ fi
 
 CMD="$COPILOT_BIN --session-id='$UUID' --name='$NAME' --remote"
 
+[ -x "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" ] && ( "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh" "$NAME" --wait ) &
 exec tmux new-session -s "$NAME" -c "$DIR" \; send-keys "$CMD" Enter
