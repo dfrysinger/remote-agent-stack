@@ -286,6 +286,9 @@ cat <<MANUAL
        ca bravo
        ...
 
+  See README.md for the full Termius walkthrough (iOS hosts + Mac
+  desktop workspace setup with screenshots).
+
 MANUAL
 
 bold "Install complete."
