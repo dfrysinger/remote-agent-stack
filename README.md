@@ -1,32 +1,148 @@
 # remote-agent-stack
 
-A small macOS bootstrap that turns a fresh Mac into a remote-accessible host
-for running named AI agent sessions (currently GitHub Copilot CLI, with
-hooks for adding Claude / Codex later) over Tailscale SSH and tmux.
+A macOS bootstrap that turns one Mac into a always-reachable host for
+running named AI agent sessions ([GitHub Copilot
+CLI](https://github.com/github/copilot-cli) today; same pattern works
+for Claude Code or Codex CLI with a one-line script tweak) and reach
+them from any device — phone, tablet, another laptop — over [Tailscale
+SSH](https://tailscale.com/kb/1193/tailscale-ssh) and `tmux`, with
+[Termius](https://termius.com) as the terminal client.
+
+The end state: tap a host in Termius on your phone, land in the same
+Copilot CLI conversation your laptop left mid-thought.
+
+This README is the full setup walkthrough — fresh Mac to phone to
+desktop. If you already have parts of this stack working, jump to the
+section you need from the table of contents.
+
+---
+
+## Contents
+
+1. [What you get](#what-you-get)
+2. [How many agents?](#how-many-agents)
+3. [Prerequisites](#prerequisites)
+4. [Part 1 — Server Mac setup](#part-1--server-mac-setup)
+5. [Part 2 — iPhone (Termius iOS)](#part-2--iphone-termius-ios)
+6. [Part 3 — Mac desktop (Termius)](#part-3--mac-desktop-termius)
+7. [Daily use](#daily-use)
+8. [Configuration](#configuration)
+9. [Uninstall](#uninstall)
+10. [Status & roadmap](#status--roadmap)
+
+---
 
 ## What you get
 
-- A `copilot-agent <name>` wrapper (also installed as the short alias
-  `ca`) that launches or reattaches to a named agent session — keychain
-  unlock, tmux session management, and `copilot --resume / --name
-  / --remote` plumbing all handled.
-- A one-shot installer for the OS-level prerequisites: Homebrew, tmux,
-  Tailscale, and the MagicDNS resolver fix that Homebrew's Tailscale
-  formula leaves out.
+- A `copilot-agent <name>` wrapper (also installed as `ca`) that
+  launches or reattaches to a named agent session — keychain unlock,
+  `tmux` session management, and resumption of an existing Copilot CLI
+  session by stable session ID (`copilot --session-id=<uuid>
+  --name=<name> --remote`) all handled.
+- A one-shot installer for OS-level prerequisites: Homebrew, `tmux`,
+  Tailscale (CLI build), and the MagicDNS resolver fix that Homebrew's
+  Tailscale formula leaves out.
 - A symmetric uninstaller.
 
-## Quick start
+## How many agents?
+
+Pick whatever count fits your workflow. The author runs about a dozen
+in practice — named after the [NATO phonetic
+alphabet](https://en.wikipedia.org/wiki/NATO_phonetic_alphabet)
+(`alpha`, `bravo`, `charlie`, `delta`, `echo`, `foxtrot`, `golf`,
+`hotel`, `india`, `juliet`, `kilo`, `lima`). The `ca` script accepts
+any string and prepends `agent-` to derive a workspace directory, so
+`ca coordinator` or `ca planner` Just Work.
+
+Names are **case-sensitive end-to-end** (`tmux` session, workspace
+directory, Copilot CLI session name all match exactly what you type).
+Pick a casing convention and stick with it. Lowercase is what we use.
+
+## Prerequisites
+
+- A Mac (Apple silicon, macOS Tahoe or newer; older versions probably
+  work but aren't tested).
+- A [Tailscale](https://tailscale.com) account (the free tier covers
+  everything here).
+- [Termius](https://termius.com/download) on every device you want to
+  drive agents from. Termius **Pro** is recommended for the snippet
+  features used in [Part 2](#part-2--iphone-termius-ios), but the
+  whole stack also works on Termius Free if you're willing to type
+  `ca alpha` after each connect.
+- The **direct-download** Termius build on macOS — *not* the Mac App
+  Store version, which is sandboxed and has no local-terminal feature.
+  Download from <https://termius.com/download>.
+
+---
+
+## Part 1 — Server Mac setup
+
+This is the Mac that will host the agent sessions. Everything in this
+part runs once, on the Mac itself.
+
+> **Auth model heads-up:** this stack uses [Tailscale
+> SSH](https://tailscale.com/kb/1193/tailscale-ssh), which authenticates
+> by tailnet identity, not passwords or `~/.ssh/authorized_keys`. The
+> "username + password" Termius asks you to save later is a UI relic —
+> Tailscale SSH ignores the password (and any SSH key) and accepts the
+> connection because the iPhone is signed into the same tailnet and your
+> ACL allows it. The username field still matters: it has to match the
+> macOS user the ACL allows (and `autogroup:nonroot` in the rule below
+> means "any non-root user").
+
+### 1.1 — Tailscale account
+
+If you already have a tailnet, skip ahead. Otherwise: sign up at
+<https://login.tailscale.com/start> (free personal plan is enough),
+then confirm **MagicDNS** is on at
+<https://login.tailscale.com/admin/dns> (it's on by default for new
+tailnets — just verify). The full Tailscale walkthrough is
+[`docs/tailscale.md`](docs/tailscale.md).
+
+### 1.2 — Keep the Mac awake
+
+[Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) (free,
+Mac App Store) keeps the Mac from sleeping while still letting the
+display sleep, the screensaver lock the screen per MDM policy, etc.
+
+Recommended config (Amphetamine menu → Quick Settings):
+
+- **Allow display sleep** — ON
+- **Allow system sleep when display is closed** — OFF (keeps the Mac
+  awake even with the lid down on a clamshell setup)
+- **Allow screen saver after 45m of inactivity** — ON (so MDM lock
+  policy still fires)
+- **Start session at app launch** — ON, set to **Indefinitely**
+- **Launch Amphetamine at login** — ON (System Settings → General →
+  Login Items)
+
+The result: rebooting the Mac auto-resumes an indefinite caffeine
+session, the display still sleeps and locks, but the system never
+suspends — so the tailnet stays online and `tmux` sessions stay alive.
+
+![Amphetamine Quick Settings showing Allow display sleep ON, Allow system sleep when display is closed OFF, Allow screen saver after 45m of inactivity ON, with "New session at app launch" set to Indefinitely.](docs/images/amphetamine-quick-settings.png)
+### 1.3 — Clone and run the installer
 
 ```bash
-git clone https://github.com/dfrysinger/remote-agent-stack ~/code/remote-agent-stack
+git clone https://github.com/dfrysinger/remote-agent-stack \
+  ~/code/remote-agent-stack
 cd ~/code/remote-agent-stack
 ./install.sh
 ```
 
-If you're driving the install **over VNC / Screens / Termius** (anywhere
-the sudo prompt might be hard to see), use the GUI launcher instead —
-it opens a fresh Terminal.app window where the password prompt is
-obvious:
+The installer is idempotent — safe to re-run. It:
+
+- Installs Homebrew (if missing), `tmux`, and the Tailscale CLI build.
+- Writes `/etc/resolver/ts.net` (the MagicDNS resolver fix).
+- Symlinks `bin/copilot-agent` and `bin/ca` into `/usr/local/bin`.
+- Prints a checklist of the GUI / interactive steps it can't do for
+  you — Full Disk Access grants (next step), `tailscale up --ssh`,
+  first Copilot CLI auth prompt.
+
+If you're driving the install **over VNC / Screens / Termius** —
+anywhere the `sudo` prompt could be hard to see — use the GUI launcher
+instead, which opens a fresh Terminal.app window where the password
+prompt is obvious:
 
 ```bash
 open ~/code/remote-agent-stack/install-gui.command
@@ -34,74 +150,389 @@ open ~/code/remote-agent-stack/install-gui.command
 
 (Or double-click `install-gui.command` in Finder.)
 
-The installer is idempotent — safe to re-run. It prints a checklist of the
-manual GUI / interactive steps it can't perform (Full Disk Access grants,
-`tailscale up --ssh`, first Copilot CLI auth prompt).
+### 1.4 — Full Disk Access
 
-Once the manual steps are done, in any shell on the Mac (including over
-Tailscale SSH, via Termius, etc.):
+`tmux` and `tailscaled` both need Full Disk Access on macOS Ventura+.
+Grant FDA **before** running `tailscale up --ssh` — `tailscaled`
+without FDA can flap offline and DNS goes intermittent.
+
+The installer printed the exact Cellar paths to add. See
+[`docs/fda-grants.md`](docs/fda-grants.md) for the why and the
+step-by-step. (After every `brew upgrade tmux` or `brew upgrade
+tailscale`, the version-numbered Cellar path changes and you'll need
+to re-add — annoying but unavoidable.)
+
+### 1.5 — Authenticate Tailscale and turn on Tailscale SSH
 
 ```bash
-copilot-agent alpha     # or just: ca alpha
+sudo tailscale up --ssh
 ```
 
-Substitute `bravo`, `charlie`, etc. for your other agents. Each name maps
-to a workspace directory under `$WORKSPACE_BASE/agent-<name>`
-(default: `~/Library/CloudStorage/Dropbox/copilot-workspace/agent-alpha`,
-etc.) and a tmux session of the same name.
+Open the auth URL it prints, sign into your Tailscale account, and
+the Mac joins the tailnet. The `--ssh` flag tells `tailscaled` to bind
+a Tailscale SSH server on `:22` (replacing macOS's built-in Remote
+Login, which on a managed Mac MDM keeps disabling anyway).
 
-Names are case-sensitive end-to-end (workspace dir, tmux session, and
-Copilot session name all match exactly what you type), so pick a casing
-convention and stick with it. Lowercase is what we use.
+### 1.6 — Add an SSH ACL rule
 
-## How `copilot-agent <name>` (or `ca <name>`) behaves
+Tailscale SSH **only** binds `:22` if your tailnet ACL contains at
+least one SSH rule that could apply to the node. Out of the box, new
+tailnets have **zero** SSH rules — `:22` will refuse connections even
+though `tailscale debug prefs` shows `RunSSH: true`. Edit your ACL at
+<https://login.tailscale.com/admin/acls/file> and add:
 
-1. If a tmux session named `<name>` exists → attach to it.
-2. Otherwise:
-   - Unlock the login keychain (so `git`, `gh`, etc. inside the session
-     can read their stored credentials).
-   - Create a new tmux session in the agent's workspace directory.
-   - Run `copilot --resume='<name>' --name='<name>' --remote` inside, or
-     fall back to a fresh named session if no prior session matches.
+```json
+{
+  "ssh": [
+    {
+      "action": "accept",
+      "src":    ["autogroup:member"],
+      "dst":    ["autogroup:self"],
+      "users":  ["autogroup:nonroot"]
+    }
+  ]
+}
+```
+
+`tailscaled` picks this up within seconds. Verify:
+
+```bash
+sudo tailscale debug netmap | python3 -c \
+  'import json,sys; d=json.load(sys.stdin); p=d.get("SSHPolicy") or {}; \
+   print("rules:", len(p.get("Rules",[])))'
+```
+
+`rules: 1` (or higher) means you're good. If it's still `0`, you saved
+to the wrong tailnet or the ACL has a syntax error — see
+[`docs/tailscale.md`](docs/tailscale.md).
+
+### 1.7 — First Copilot CLI launch
+
+Install Copilot CLI per [its own
+instructions](https://github.com/github/copilot-cli) (`brew install
+copilot-cli` works once it's published; otherwise follow the README
+there).
+
+The first time you launch `copilot`, it asks:
+
+> System vault not available — store token in plain text config file?
+
+**Answer Yes.** The macOS keychain prompts the GUI for unlock, which
+there's nobody to dismiss when you're SSH'd in from a phone — the
+keychain stays locked and Copilot CLI stalls. The plaintext fallback
+lives at `~/.copilot/config.json` with mode `0600`, inside the
+FileVault-encrypted home volume. The risk delta over the keychain is
+small; the operational benefit (Copilot CLI just works over SSH) is
+large.
+
+### 1.8 — Workspace location
+
+The installer asks where agent workspaces should live (one directory
+per agent — e.g., `agent-alpha/`, `agent-bravo/` — under a parent base
+directory). It auto-picks a smart default and lets you override:
+
+- **If you have Dropbox installed**, the default is
+  `~/Library/CloudStorage/Dropbox/copilot-workspace` — workspaces sync
+  across all your Macs out of the box.
+- **If you don't have Dropbox**, the default is
+  `~/copilot-workspace`.
+
+Press Enter to accept the default, or type any path you like (`~`,
+`$HOME`, and shell expansions all work). Re-running `install.sh` later
+keeps your existing choice and skips the prompt.
+
+To pick a path non-interactively (or from a script):
+
+```bash
+./install.sh --workspace-base ~/code/copilot-workspace
+```
+
+This writes `WORKSPACE_BASE="…"` into
+`~/.config/remote-agent-stack/config`. Edit that file directly any
+time to move the workspace base later (you'll have to move existing
+`agent-<name>/` directories by hand).
+
+### 1.9 — Test the wrapper locally
+
+```bash
+ca alpha
+```
+
+You should land inside a `tmux` session named `alpha`, in
+`$WORKSPACE_BASE/agent-alpha/` (whatever path you picked in 1.8), with
+Copilot CLI running. Detach with `Ctrl-b d` (you're back at the Mac
+shell). Reattach with `ca alpha` again — should be instant. Now the
+Mac side is done.
+
+---
+
+## Part 2 — iPhone (Termius iOS)
+
+The phone is your "land in any agent in one tap from anywhere"
+client.
+
+### 2.1 — Tailscale on iOS
+
+Install [Tailscale from the App
+Store](https://apps.apple.com/app/tailscale/id1470499037), sign in
+with the same account as the Mac, and toggle it on. That's it — no
+config.
+
+### 2.2 — Install Termius
+
+[Termius from the App
+Store](https://apps.apple.com/us/app/termius-ssh-client/id549039908).
+Sign in with the same account you'll use on the Mac desktop client
+(this enables Termius Sync, optional but convenient).
+
+### 2.3 — Find your Mac's tailnet FQDN
+
+You'll need this for the host config. From the Mac:
+
+```bash
+tailscale status --self --json | python3 -c \
+  'import json,sys; d=json.load(sys.stdin); \
+   print(d["Self"]["DNSName"].rstrip("."))'
+```
+
+That prints something like `macbook-air.tail-xxxx.ts.net`. (You can
+also find it in the [Tailscale admin Machines
+page](https://login.tailscale.com/admin/machines) under your Mac's
+name.) Copy it; you'll paste it into Termius next.
+
+### 2.4 — Create a "Mac" host group
+
+A host group lets every Agent host inherit shared SSH config (address,
+username) so you only have one place to fix things. Termius docs:
+<https://docs.termius.com/termius-handbook/host-groups>.
+
+1. Termius → **Hosts** → **+** → **New Group**.
+2. Name it `Mac`.
+3. Set group-level SSH defaults:
+   - **Address**: the FQDN from 2.3
+     (`macbook-air.tail-xxxx.ts.net`).
+   - **Username**: your macOS username (whatever `whoami` prints on
+     the Mac). This has to match the user the Tailscale ACL allows.
+   - **Password**: leave it blank, or put any string — Tailscale SSH
+     ignores it. Termius will offer to save the password when you
+     first connect; saying yes is harmless but not required.
+4. Save.
+
+<!-- SCREENSHOT: iOS Termius "New Group" sheet with Address / Username
+     fields filled in. -->
+
+### 2.5 — Create one host per agent
+
+For each agent name (`alpha`, `bravo`, `charlie`, …):
+
+1. Termius → **Hosts** → **+** → **New Host**.
+2. **Group**: Mac (the group you just created — host inherits address
+   and username from it).
+3. **Label**: `Agent alpha` (or whatever you want to see in the host
+   list).
+4. **Startup snippet**:
+
+   ```
+   ca alpha
+   ```
+
+   Termius docs on snippets:
+   <https://docs.termius.com/termius-handbook/snippets>.
+5. Save.
+
+Repeat for each agent. The host list now has `Agent alpha`, `Agent
+bravo`, etc., all inheriting from the Mac group, each running a
+different one-line snippet on connect.
+
+<!-- SCREENSHOT: iOS Termius host list showing "Agent ..." rows under
+     the "Mac" group. -->
+
+### 2.6 — Tap and go
+
+Tap `Agent alpha`. Termius connects over Tailscale SSH (the iPhone's
+tailnet identity is what authenticates — this is why you didn't need
+to set up a key), lands in the Mac shell, runs `ca alpha`, and you're
+in the agent's `tmux` session. Detach with `Ctrl-b d`, kill the
+Termius tab, and reattach later from the same host (or from a
+different device entirely) — the `tmux` session keeps running on the
+Mac.
+
+---
+
+## Part 3 — Mac desktop (Termius)
+
+On the Mac itself, Termius's local-shell + workspaces feature is more
+ergonomic than snippets — you get a saved grid of named local terminals
+that auto-reconnect to their `tmux` sessions when you reopen the
+workspace. This is the trickiest part of the whole stack to set up
+because the Termius UI for it isn't obvious.
+
+### 3.1 — Install the direct-download build
+
+Mac App Store Termius is sandboxed and has **no local terminal at
+all**. Download the unsandboxed build from
+<https://termius.com/download>.
+
+### 3.2 — Enable autocomplete and verify it replays commands
+
+Termius → Settings → enable **Autocomplete**. This is what makes a
+saved local shell replay its last-entered command on reopen — the
+mechanism we'll use to auto-reconnect to `tmux`. Verify it works
+before you invest in building the full workspace:
+
+1. Open one local terminal (`⌘L`).
+2. Run `echo replay-test`.
+3. Close the tab.
+4. Reopen a local terminal in the same window.
+5. Termius should suggest `echo replay-test` (or replay it
+   automatically depending on your version) — confirming autocomplete
+   is on.
+
+If nothing replays, recheck the setting before continuing. The whole
+auto-reconnect flow in 3.5 depends on it.
+
+### 3.3 — Build the workspace
+
+Termius doesn't have a "create workspace" button. You build one by
+dragging a tab into the body of another tab's window:
+
+1. **Open the first local terminal**: click **Vaults → Terminal**, or
+   press `⌘L`. A local shell tab opens.
+2. **Open a second local terminal in a new tab in the same window**:
+   `⌘L` again.
+
+   ![Termius desktop with two local-terminal tabs in the same window — "Local Terminal" (active) and "Local Terminal (1)" — the pre-workspace state.](docs/images/termius-desktop-two-tabs.png)
+
+3. **Drag-drop to form the workspace**: select one of the tabs, then
+   drag the *unselected* tab into the body of the window. A drop-zone
+   box appears; release. You now have a tiled workspace with two
+   panes.
+
+   ![Termius desktop mid-drag: a floating "Local Terminal (1)" tab is being dragged over the body of the existing terminal, with a tinted drop-zone overlay showing where the new pane will land.](docs/images/termius-desktop-drag-drop.png)
+
+4. **Save the workspace**: tap the small dot in the workspace tab's
+   header. Right-click the tab to rename it (e.g., `Agents`).
+
+   ![Termius desktop after the drop: a single "Workspace" tab now contains two stacked panes ("Local Terminal (1)" on top, "Local Terminal" on the bottom). The small unfilled dot next to the "Workspace" tab title is the unsaved-changes indicator — click it to save.](docs/images/termius-desktop-workspace-formed.png)
+
+5. **Add more panes**: open another `⌘L` tab, drag-drop into the
+   workspace body to add a third pane. Repeat until you have one pane
+   per agent (the author runs ~12).
+
+### 3.4 — Name each pane
+
+By default the panes have generic names. To rename:
+
+1. Click the **focus mode** button in the top-right of any terminal
+   card (next to the X). This expands the card and reveals a left
+   panel listing every named local-shell session in the workspace.
+
+   ![Termius desktop in focus mode: the left "Terminals · 2" side panel lists "Local Terminal (1)" and "Local Terminal" entries; the active terminal fills the right side. Right-click a session name in this side panel to rename it.](docs/images/termius-desktop-focus-mode.png)
+
+2. **Right-click a session name in the side panel** → **Rename** →
+   give it the agent name (`alpha`, `bravo`, …).
+3. Click the **split-view** button at the top-right of the side panel
+   to return to the grid view of all panes.
+
+4. **Save again** (the tiny dot on the workspace tab).
+
+### 3.5 — Run `ca <name>` once in each pane
+
+In each pane, run the matching command:
+
+```bash
+ca alpha   # in the pane named "alpha"
+ca bravo   # in the pane named "bravo"
+# …
+```
+
+This serves two purposes:
+
+1. Bootstraps the actual `tmux`/Copilot CLI session for that agent.
+2. Becomes the **last entered command** in that pane, which is what
+   Termius's autocomplete replays on reopen.
+
+### 3.6 — Save, close, reopen
+
+Save the workspace one more time (tiny dot). Close the workspace
+window. Reopen it from the Workspaces sidebar.
+
+Each pane reopens, replays `ca <name>`, and reconnects to the
+already-running `tmux` session on the Mac — you're back in the same
+grid of agent conversations you left.
+
+### 3.7 — Whenever you change the layout, save again
+
+> **Save the workspace every time you change anything** — adding a
+> pane, renaming a session, resizing splits. The tiny dot is easy to
+> miss. If you close the window without saving, the change is lost.
+
+---
+
+## Daily use
+
+Once everything is set up:
+
+- **From the phone**: tap an Agent host in Termius. You're in.
+- **From the Mac desktop**: open the saved Termius workspace. Every
+  pane reconnects.
+- **Detach** (leave session running, drop back to shell): `Ctrl-b d`
+  inside `tmux`.
+- **Kill** an agent session entirely: exit Copilot CLI, then `exit`
+  the shell `tmux` gave you. Or from outside any device:
+  `tmux kill-session -t alpha`.
+- **Reattach from anywhere**: `ca alpha` on the Mac, or tap `Agent
+  alpha` in iOS Termius. Same session.
+
+`tmux` sessions live in memory — they don't survive a Mac reboot. The
+wrapper relaunches Copilot CLI with the same `--session-id=<uuid>` on
+next launch, so the Copilot CLI conversation comes back; only the
+`tmux` scrollback is lost.
 
 ## Configuration
 
-Defaults live in `~/.config/remote-agent-stack/config` (created on first
-install). Override any of:
+Defaults live in `~/.config/remote-agent-stack/config`, which the
+installer writes for you (see [§1.8](#18--workspace-location)). The
+file looks roughly like:
 
 ```sh
-WORKSPACE_BASE="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
-COPILOT_BIN="copilot"
-AGENT_DIR_PREFIX="agent-"
+WORKSPACE_BASE="/Users/you/copilot-workspace"   # set during install
+# COPILOT_BIN="copilot"
+# AGENT_DIR_PREFIX="agent-"
 ```
 
-## Docs
+`WORKSPACE_BASE` is whatever you picked at install time (the installer
+auto-defaults to the Dropbox path if Dropbox is installed, otherwise
+`$HOME/copilot-workspace`). Re-run `./install.sh --workspace-base
+PATH` or edit the file directly to move it.
 
-- [docs/termius-snippets.md](docs/termius-snippets.md) — ready-to-paste
-  Termius snippets for six NATO-named agents.
-- [docs/fda-grants.md](docs/fda-grants.md) — exactly which binaries need
-  Full Disk Access on macOS Ventura+ and why.
-- [docs/troubleshooting.md](docs/troubleshooting.md) — every macOS /
-  Tailscale / Copilot CLI gotcha we hit getting this working.
+To use a different agent backend (Claude Code, Codex CLI), point
+`COPILOT_BIN` at its launcher and adjust the session-id flags inside
+`bin/copilot-agent`. First-class support for those backends is on the
+roadmap — see [Status](#status--roadmap).
 
 ## Uninstall
 
 ```bash
-~/code/remote-agent-stack/uninstall.sh           # removes wrapper + resolver
-~/code/remote-agent-stack/uninstall.sh --purge   # also drops the config dir
+~/code/remote-agent-stack/uninstall.sh           # wrapper + resolver
+~/code/remote-agent-stack/uninstall.sh --purge   # also drops config dir
 ```
 
 Homebrew packages, FDA grants, and Tailscale network state are left in
 place — see the uninstaller output for the manual cleanup commands.
 
-## Why a wrapper instead of a shell snippet?
-
-Because debugging that snippet across six Termius profiles, on a phone,
-over a flaky LTE connection, in tmux, with a Copilot CLI that's still
-asking about keychain storage was a bad time. One file, one place to fix.
-
-## Status
+## Status & roadmap
 
 Single-machine, single-user, macOS arm64. Tested on macOS Tahoe.
-Linux support and other agent backends (Claude Code, Codex) are open
-issues — patches welcome.
+Linux support and first-class Claude Code / Codex CLI backends are
+[open issues](https://github.com/dfrysinger/remote-agent-stack/issues)
+— patches welcome.
+
+## Other docs
+
+- [`docs/tailscale.md`](docs/tailscale.md) — Tailscale account →
+  MagicDNS → ACL → CLI install → resolver fix.
+- [`docs/fda-grants.md`](docs/fda-grants.md) — exactly which binaries
+  need Full Disk Access and why.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — every macOS /
+  Tailscale / Copilot CLI / Termius gotcha we hit.
