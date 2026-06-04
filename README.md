@@ -329,15 +329,17 @@ For each agent name (`alpha`, `bravo`, `charlie`, …):
    and username from it).
 3. **Label**: `Agent alpha` (or whatever you want to see in the host
    list).
-4. **Startup snippet**:
+4. **Startup snippet**: tap **Startup Snippet**, then **Add new
+   snippet**. Enter:
 
    ```
    ca alpha
    ```
 
-   Termius docs on snippets:
-   <https://docs.termius.com/termius-handbook/snippets>.
-5. Save.
+   Name the snippet `Agent alpha` (or whatever you want), save, and
+   it'll be selected as the host's startup snippet. Termius docs on
+   snippets: <https://docs.termius.com/termius-handbook/snippets>.
+5. Save the host.
 
 Repeat for each agent. The host list now has `Agent alpha`, `Agent
 bravo`, etc., all inheriting from the Mac group, each running a
