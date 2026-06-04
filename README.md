@@ -307,8 +307,14 @@ username) so you only have one place to fix things. Termius docs:
      the Mac). This **must** be a real user — Tailscale SSH checks it
      against the ACL, and a wrong/blank username is what causes the
      "connection failed" prompt loop.
-   - **Password**: leave it blank. Tailscale SSH authenticates by
-     tailnet identity; if you do save a value, it's sent but ignored.
+   - **Password**: Tailscale SSH doesn't use this for auth. Two
+     reasonable choices:
+     - **Save your macOS login password.** Termius will autofill it
+       at `sudo` prompts on iOS, which is the only reason to bother.
+       The value is sent on the wire (encrypted under SSH +
+       WireGuard) and discarded by the Tailscale SSH server.
+     - **Leave it blank.** You'll type your password by hand whenever
+       `sudo` asks.
 4. Save.
 
 <!-- SCREENSHOT: iOS Termius "New Group" sheet with Address / Username
