@@ -159,6 +159,9 @@ if [ -z "$UUID" ]; then
 fi
 
 CMD="$COPILOT_BIN --session-id='$UUID' --name='$NAME' --remote"
+if [ "${ALLOW_ALL:-false}" = "true" ]; then
+  CMD="$CMD --allow-all"
+fi
 
 [ -n "$MAILBOX_POKE" ] && ( "$MAILBOX_POKE" "$NAME" --wait ) &
 exec tmux new-session -s "$NAME" -c "$DIR" \; send-keys "$CMD" Enter

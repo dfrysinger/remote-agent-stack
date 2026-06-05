@@ -354,6 +354,49 @@ else
   todo "enable later: edit $CONFIG_DIR/config and set MAILBOX_INTEGRATION=\"true\""
 fi
 
+# ---- allow-all prompt -----------------------------------------------------
+#
+# When enabled, ca passes --allow-all to copilot on new-session launch
+# (--allow-all-tools + --allow-all-paths + --allow-all-urls). Reasonable
+# for a personal-machine, named-agent workflow where the human is steering;
+# NOT recommended for shared/CI environments. Off by default.
+
+bold "Allow-all permissions (optional)"
+
+EXISTING_ALLOW_ALL=""
+if [ -f "$CONFIG_DIR/config" ]; then
+  EXISTING_ALLOW_ALL="$(
+    awk -F'=' '/^[[:space:]]*ALLOW_ALL=/{
+      sub(/^[[:space:]]*ALLOW_ALL=/, "", $0)
+      gsub(/^"|"$/, "", $0)
+      print
+      exit
+    }' "$CONFIG_DIR/config" 2>/dev/null || true
+  )"
+fi
+
+ALLOW_ALL_RESOLVED=""
+
+if [ -n "$EXISTING_ALLOW_ALL" ]; then
+  ALLOW_ALL_RESOLVED="$EXISTING_ALLOW_ALL"
+  ok "keeping existing config: ALLOW_ALL=$ALLOW_ALL_RESOLVED"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo "    Pass --allow-all to copilot on every ca launch?"
+  echo "    (auto-approves all tools, paths, and URLs — skip per-call prompts)"
+  echo "    Recommended only on personal machines where you steer the agent."
+  printf "    Enable? [y/N]: "
+  read -r ALLOW_ALL_INPUT || ALLOW_ALL_INPUT=""
+  case "$ALLOW_ALL_INPUT" in
+    y|Y|yes|YES|true) ALLOW_ALL_RESOLVED="true" ;;
+    *)                ALLOW_ALL_RESOLVED="false" ;;
+  esac
+  ok "allow-all: $ALLOW_ALL_RESOLVED"
+else
+  ALLOW_ALL_RESOLVED="false"
+  warn "non-interactive shell — leaving allow-all disabled"
+  todo "enable later: edit $CONFIG_DIR/config and set ALLOW_ALL=\"true\""
+fi
+
 bold "Configuration"
 
 mkdir -p "$CONFIG_DIR"
@@ -380,6 +423,11 @@ WORKSPACE_BASE="$WORKSPACE_BASE_RESOLVED"
 # the recipient's tmux pane on attach + new-session if pending mail
 # exists. When unset or "false", the mailbox hook is skipped entirely.
 MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
+
+# ALLOW_ALL: when "true", ca passes --allow-all to copilot on new-session
+# launch (auto-approves all tools, paths, and URLs). Personal-machine
+# convenience; do NOT enable in shared environments.
+ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 EOF
 ok "wrote $CONFIG_DIR/config"
 
