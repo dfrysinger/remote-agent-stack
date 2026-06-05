@@ -89,15 +89,18 @@ fi
 
 # ---- mailbox poke resolver -------------------------------------------------
 # Mailbox skill (dfrysinger/skills) lives in the plugin install path once
-# installed; fall back to local-dev paths. Empty if not installed.
+# installed; fall back to local-dev paths. Empty if not installed OR if
+# MAILBOX_INTEGRATION is not set to "true" in config.
 
 MAILBOX_POKE=""
-for _p in \
-  "$HOME/.copilot/installed-plugins/_direct/dfrysinger--skills/skills/mailbox/scripts/mailbox-poke.sh" \
-  "$HOME/code/skills/skills/mailbox/scripts/mailbox-poke.sh" \
-  "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh"; do
-  [ -x "$_p" ] && { MAILBOX_POKE="$_p"; break; }
-done
+if [ "${MAILBOX_INTEGRATION:-false}" = "true" ]; then
+  for _p in \
+    "$HOME/.copilot/installed-plugins/_direct/dfrysinger--skills/skills/mailbox/scripts/mailbox-poke.sh" \
+    "$HOME/code/skills/skills/mailbox/scripts/mailbox-poke.sh" \
+    "$HOME/.copilot/skills/mailbox/scripts/mailbox-poke.sh"; do
+    [ -x "$_p" ] && { MAILBOX_POKE="$_p"; break; }
+  done
+fi
 
 # ---- attach if session exists ---------------------------------------------
 

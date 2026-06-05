@@ -297,6 +297,63 @@ else
   todo "override later with: $0 --workspace-base PATH"
 fi
 
+# ---- mailbox integration prompt -------------------------------------------
+#
+# The optional dfrysinger-skills `mailbox` skill lets one named agent send
+# messages/files to another (e.g., handoffs). When enabled, the ca wrapper
+# auto-pokes the recipient's tmux pane on attach + new-session if there is
+# pending mail. Off by default; opt-in here.
+
+bold "Mailbox integration (optional)"
+
+# Smart default: if the plugin is already installed, suggest yes; else no.
+MAILBOX_PLUGIN_PATH="$HOME/.copilot/installed-plugins/_direct/dfrysinger--skills/skills/mailbox"
+if [ -d "$MAILBOX_PLUGIN_PATH" ]; then
+  MAILBOX_DEFAULT="yes"
+  MAILBOX_DEFAULT_REASON="dfrysinger-skills/mailbox plugin already installed"
+else
+  MAILBOX_DEFAULT="no"
+  MAILBOX_DEFAULT_REASON="dfrysinger-skills plugin not detected (install via Copilot CLI: /plugin install dfrysinger/skills)"
+fi
+
+# Read existing setting from config (re-runs don't pester).
+EXISTING_MAILBOX_INTEGRATION=""
+if [ -f "$CONFIG_DIR/config" ]; then
+  EXISTING_MAILBOX_INTEGRATION="$(
+    awk -F'=' '/^[[:space:]]*MAILBOX_INTEGRATION=/{
+      sub(/^[[:space:]]*MAILBOX_INTEGRATION=/, "", $0)
+      gsub(/^"|"$/, "", $0)
+      print
+      exit
+    }' "$CONFIG_DIR/config" 2>/dev/null || true
+  )"
+fi
+
+MAILBOX_INTEGRATION_RESOLVED=""
+
+if [ -n "$EXISTING_MAILBOX_INTEGRATION" ]; then
+  MAILBOX_INTEGRATION_RESOLVED="$EXISTING_MAILBOX_INTEGRATION"
+  ok "keeping existing config: MAILBOX_INTEGRATION=$MAILBOX_INTEGRATION_RESOLVED"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo "    Enable mailbox integration in the ca wrapper?"
+  echo "    (cross-session message/file handoff between named agents)"
+  echo "    Default: $MAILBOX_DEFAULT  ($MAILBOX_DEFAULT_REASON)"
+  printf "    Enable? [y/N, default %s]: " "$MAILBOX_DEFAULT"
+  read -r MAILBOX_INPUT || MAILBOX_INPUT=""
+  if [ -z "$MAILBOX_INPUT" ]; then
+    MAILBOX_INPUT="$MAILBOX_DEFAULT"
+  fi
+  case "$MAILBOX_INPUT" in
+    y|Y|yes|YES|true) MAILBOX_INTEGRATION_RESOLVED="true" ;;
+    *)                MAILBOX_INTEGRATION_RESOLVED="false" ;;
+  esac
+  ok "mailbox integration: $MAILBOX_INTEGRATION_RESOLVED"
+else
+  MAILBOX_INTEGRATION_RESOLVED="false"
+  warn "non-interactive shell — leaving mailbox integration disabled"
+  todo "enable later: edit $CONFIG_DIR/config and set MAILBOX_INTEGRATION=\"true\""
+fi
+
 bold "Configuration"
 
 mkdir -p "$CONFIG_DIR"
@@ -317,6 +374,12 @@ WORKSPACE_BASE="$WORKSPACE_BASE_RESOLVED"
 
 # AGENT_DIR_PREFIX: prefix for per-agent directory names.
 # AGENT_DIR_PREFIX="agent-"
+
+# MAILBOX_INTEGRATION: enable cross-session message/file handoff via the
+# optional dfrysinger-skills `mailbox` skill. When "true", ca will poke
+# the recipient's tmux pane on attach + new-session if pending mail
+# exists. When unset or "false", the mailbox hook is skipped entirely.
+MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
 EOF
 ok "wrote $CONFIG_DIR/config"
 
