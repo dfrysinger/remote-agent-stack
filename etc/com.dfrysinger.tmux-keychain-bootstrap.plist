@@ -4,8 +4,9 @@
   remote-agent-stack tmux keychain bootstrap LaunchAgent.
 
   Installed into ~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist
-  by install.sh. The __SCRIPT_PATH__ placeholder is substituted at install
-  time with the absolute path to tmux-keychain-bootstrap.sh.
+  by install.sh. Two placeholders are substituted at install time:
+    __SCRIPT_PATH__       — absolute path to tmux-keychain-bootstrap.sh
+    __TMUX_SOCKET_PATH__  — default tmux socket for this UID
 
   Loaded under the user's GUI/Aqua login session (gui/<uid>) so the tmux
   server it spawns inherits the full login-keychain search list. Without
@@ -14,9 +15,21 @@
   inside that server is keychain-restricted — see the script's header
   comment for the full story.
 
-  RunAtLoad fires once at login. KeepAlive is false because the script
-  itself is idempotent and short-lived; once the anchor session exists,
-  there's nothing more to do.
+  RunAtLoad fires once at GUI login. KeepAlive uses PathState as a
+  watchdog: the agent is kept eligible to run as long as the tmux
+  socket does NOT exist. So:
+    - At login: socket missing → script fires → creates server →
+      socket appears → launchd lets the script exit and idles.
+    - On `tmux kill-server`: socket disappears → launchd refires the
+      script → creates a fresh GUI-context server → socket reappears
+      → launchd idles again.
+  Net effect: self-healing. No manual launchctl kickstart needed.
+  launchd's default 10s ThrottleInterval bounds the relaunch rate, so
+  if the script ever fails to create a server (e.g. tmux binary
+  missing) it gets re-fired at most once every ~10s instead of in a
+  tight loop. That's a deliberate feature, not a bug: it means the
+  agent self-recovers as soon as the user fixes the underlying
+  problem, at the cost of some log noise in the meantime.
 -->
 <plist version="1.0">
 <dict>
@@ -32,7 +45,13 @@
   <true/>
 
   <key>KeepAlive</key>
-  <false/>
+  <dict>
+    <key>PathState</key>
+    <dict>
+      <key>__TMUX_SOCKET_PATH__</key>
+      <false/>
+    </dict>
+  </dict>
 
   <key>StandardOutPath</key>
   <string>/tmp/com.dfrysinger.tmux-keychain-bootstrap.out.log</string>

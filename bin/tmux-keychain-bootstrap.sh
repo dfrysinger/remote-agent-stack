@@ -22,12 +22,27 @@
 
 set -e
 
+# Pin the tmux socket location to /private/tmp/tmux-<uid>/default so it
+# matches the PathState watcher in the plist. The plist's PathState is
+# hardcoded to the default tmux socket path at install time; if launchd's
+# user environment has TMUX_TMPDIR set (via `launchctl setenv`), tmux
+# would otherwise create the socket somewhere else and the watcher would
+# fire forever on a path that never appears. Unsetting here keeps the
+# script and the watcher in agreement regardless of launchd env.
+unset TMUX_TMPDIR
+
 TMUX="$(command -v tmux 2>/dev/null || true)"
 [ -x "$TMUX" ] || TMUX=/opt/homebrew/bin/tmux
 [ -x "$TMUX" ] || TMUX=/usr/local/bin/tmux
 [ -x "$TMUX" ] || {
   echo "tmux-keychain-bootstrap: tmux binary not found" >&2
-  # Exit 0 so launchd doesn't repeatedly retry an unfixable error.
+  # Exit 0 so we don't add to the noise. NOTE: with the new
+  # KeepAlive=PathState=false in the plist, launchd will still respawn
+  # us every ThrottleInterval (~10s) while the socket path is missing,
+  # regardless of our exit code. That's intentional: it means we
+  # self-recover automatically once the user reinstalls tmux. The cost
+  # is some log noise in /tmp/com.dfrysinger.tmux-keychain-bootstrap.err.log
+  # during the broken-tmux window, which is fine.
   exit 0
 }
 

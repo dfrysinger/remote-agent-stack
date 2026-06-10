@@ -489,16 +489,25 @@ if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
   fi
 
   mkdir -p "$HOME/Library/LaunchAgents"
-  # Substitute the absolute bootstrap-script path into the plist template.
+  # Substitute the absolute bootstrap-script path AND the tmux socket path
+  # into the plist template. The socket path uses the installing user's
+  # UID; we assume default TMUX_TMPDIR (/private/tmp). The socket-path
+  # placeholder powers the PathState watchdog: launchd refires the script
+  # whenever the socket disappears (e.g. tmux kill-server).
+  #
   # Escape sed-replacement metacharacters (`\`, `&`, and our delimiter `|`)
   # in case the install path ever contains them; the leading newline guard
   # via $'...' isn't needed because pgrep/launchctl already block actual
-  # newlines in usable paths.
+  # newlines in usable paths. The socket path is composed from numeric UID
+  # and a fixed prefix so it can't contain metacharacters.
   BOOTSTRAP_SCRIPT_ESC=${BOOTSTRAP_SCRIPT//\\/\\\\}
   BOOTSTRAP_SCRIPT_ESC=${BOOTSTRAP_SCRIPT_ESC//&/\\&}
   BOOTSTRAP_SCRIPT_ESC=${BOOTSTRAP_SCRIPT_ESC//|/\\|}
-  sed "s|__SCRIPT_PATH__|$BOOTSTRAP_SCRIPT_ESC|g" "$LAUNCHAGENT_SRC" > "$LAUNCHAGENT_DST"
-  ok "installed $LAUNCHAGENT_DST"
+  TMUX_SOCKET_PATH="/private/tmp/tmux-$(id -u)/default"
+  sed -e "s|__SCRIPT_PATH__|$BOOTSTRAP_SCRIPT_ESC|g" \
+      -e "s|__TMUX_SOCKET_PATH__|$TMUX_SOCKET_PATH|g" \
+      "$LAUNCHAGENT_SRC" > "$LAUNCHAGENT_DST"
+  ok "installed $LAUNCHAGENT_DST (watchdog path: $TMUX_SOCKET_PATH)"
 
   # Bootstrap into the user's GUI domain so it takes effect this login
   # without waiting for the next reboot. If it's already loaded (e.g.
@@ -508,7 +517,7 @@ if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
   if command -v launchctl >/dev/null 2>&1; then
     launchctl bootout "gui/$(id -u)/$LAUNCHAGENT_LABEL" 2>/dev/null || true
     if launchctl bootstrap "gui/$(id -u)" "$LAUNCHAGENT_DST" 2>/dev/null; then
-      ok "loaded LaunchAgent into gui/$(id -u) (will run at every login)"
+      ok "loaded LaunchAgent into gui/$(id -u) (fires at login + whenever tmux socket disappears)"
     else
       warn "couldn't load LaunchAgent automatically — log out and back in to activate"
     fi
@@ -517,29 +526,23 @@ if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
   # If the user had a tmux server running BEFORE we installed (captured
   # in PRE_EXISTING_TMUX above), it's in whatever security context it
   # was originally launched from — most often a Tailscale-SSH shell,
-  # which means it can't see login.keychain-db. Tell them how to swap
-  # it for a GUI-context server. Killing tmux is destructive (loses
-  # scrollback / window layouts) so we don't do it automatically; named
-  # Copilot sessions resume on next ca call.
+  # which means it can't see login.keychain-db. To swap it for a
+  # GUI-context server, they just need to kill the existing server —
+  # the watchdog refires the script automatically because the socket
+  # disappears.
   #
-  # Important: the LaunchAgent has RunAtLoad=true and KeepAlive=false, so
-  # it fires exactly once (when we just bootstrapped it above, and again
-  # at each GUI login) — `tmux kill-server` does NOT re-trigger it. After
-  # killing, the user must either kickstart the agent explicitly, log
-  # out / log back in, or run the bootstrap script directly from a GUI
-  # Terminal. We give them the kickstart command.
+  # We only warn on fresh installs: if EXISTING_LAUNCHAGENT=yes, the
+  # watchdog has already been running and the current server was
+  # spawned by it, so it's already GUI-context.
   if [ "$PRE_EXISTING_TMUX" = "yes" ] && [ "$EXISTING_LAUNCHAGENT" = "no" ]; then
     warn "tmux server was already running before install — it's in its original security context."
     echo "    To activate keychain access for existing sessions:"
     echo "      1. Let any in-flight agent work finish."
-    echo "      2. In Terminal.app on the Mac: tmux kill-server"
-    echo "      3. In Terminal.app on the Mac:"
-    echo "           launchctl kickstart -k \"gui/\$(id -u)/$LAUNCHAGENT_LABEL\""
-    echo "         (re-fires the LaunchAgent in GUI context, starting the anchor)"
-    echo "      4. Re-attach your named agents: ca alpha, ca bravo, ..."
+    echo "      2. From any shell: tmux kill-server"
+    echo "         (the watchdog will refire the bootstrap script within"
+    echo "          a few seconds and the new server will be GUI-context)"
+    echo "      3. Re-attach your named agents: ca alpha, ca bravo, ..."
     echo "    Each Copilot session resumes by UUID (no conversation lost)."
-    echo "    Alternative: log out of the Mac account and log back in —"
-    echo "    the LaunchAgent fires automatically at GUI login."
   fi
 fi
 

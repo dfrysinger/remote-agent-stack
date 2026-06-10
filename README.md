@@ -549,7 +549,8 @@ roadmap — see [Status](#status--roadmap).
 The installer offers to install a tiny LaunchAgent
 (`~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist`)
 that pre-warms the tmux server in your GUI (Aqua) login session at
-every login.
+every login and re-fires automatically whenever the tmux socket
+disappears.
 
 Without it, the very first `ca <name>` call after a Mac reboot
 bootstraps the tmux server from your SSH login shell. macOS gives that
@@ -567,6 +568,13 @@ session onward. It runs once at login, starts a hidden anchor session
 called `_keychain-anchor` (so the server stays alive), and exits.
 Subsequent `ca <name>` calls just attach to or create sessions on
 that already-running, properly-contextualized server.
+
+It also installs a `PathState` watchdog on the tmux socket. If you
+ever run `tmux kill-server` — intentionally or by accident — launchd
+notices the socket disappear within a few seconds and re-fires the
+bootstrap script, which spawns a fresh GUI-context server. So
+recovery is hands-off: kill the server, wait a moment, run `ca <name>`
+again, you're back.
 
 If you skip it: keep using `gh-auth-macos` from the
 [dfrysinger/skills](https://github.com/dfrysinger/skills) plugin as a
