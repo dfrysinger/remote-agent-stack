@@ -519,6 +519,8 @@ file looks roughly like:
 
 ```sh
 WORKSPACE_BASE="/Users/you/copilot-workspace"   # set during install
+MAILBOX_INTEGRATION="false"                     # off by default
+ALLOW_ALL="false"                               # off by default
 # COPILOT_BIN="copilot"
 # AGENT_DIR_PREFIX="agent-"
 ```
@@ -528,10 +530,57 @@ auto-defaults to the Dropbox path if Dropbox is installed, otherwise
 `$HOME/copilot-workspace`). Re-run `./install.sh --workspace-base
 PATH` or edit the file directly to move it.
 
+`MAILBOX_INTEGRATION` enables the cross-session
+[mailbox](https://github.com/dfrysinger/skills) skill — `ca` pokes the
+recipient's pane on attach + cold-start when pending mail exists. Off
+unless you have the skill installed.
+
+`ALLOW_ALL` makes `ca` pass `--allow-all` to copilot on new-session
+launch (auto-approves all tools, paths, and URLs). Personal-machine
+convenience; do not enable in shared environments.
+
 To use a different agent backend (Claude Code, Codex CLI), point
 `COPILOT_BIN` at its launcher and adjust the session-id flags inside
 `bin/copilot-agent`. First-class support for those backends is on the
 roadmap — see [Status](#status--roadmap).
+
+### tmux keychain bootstrap LaunchAgent
+
+The installer offers to install a tiny LaunchAgent
+(`~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist`)
+that pre-warms the tmux server in your GUI (Aqua) login session at
+every login.
+
+Without it, the very first `ca <name>` call after a Mac reboot
+bootstraps the tmux server from your SSH login shell. macOS gives that
+shell a restricted keychain search list (System keychain only, no
+login keychain), and *every* subsequent shell inside that tmux server
+inherits the restriction — including the ones `ca` opens later when
+you re-attach. The visible symptom is that `gh`, the `osxkeychain`
+git credential helper, and anything else that reaches into the login
+keychain silently fail inside agent shells, even though they work in
+Terminal.app on the same Mac.
+
+The LaunchAgent fixes that by starting the tmux server itself under
+the GUI session, so the security context is correct from the first
+session onward. It runs once at login, starts a hidden anchor session
+called `_keychain-anchor` (so the server stays alive), and exits.
+Subsequent `ca <name>` calls just attach to or create sessions on
+that already-running, properly-contextualized server.
+
+If you skip it: keep using `gh-auth-macos` from the
+[dfrysinger/skills](https://github.com/dfrysinger/skills) plugin as a
+per-shell fallback that reads the keychain via the `security` CLI and
+exports `GH_TOKEN`. That works but is per-shell setup, not a one-time
+fix.
+
+To install later, re-run `./install.sh` and answer Y at the prompt.
+To uninstall:
+
+```bash
+launchctl bootout "gui/$(id -u)/com.dfrysinger.tmux-keychain-bootstrap"
+rm ~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist
+```
 
 ## Uninstall
 

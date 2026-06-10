@@ -431,6 +431,118 @@ ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 EOF
 ok "wrote $CONFIG_DIR/config"
 
+# ---- tmux keychain bootstrap LaunchAgent ----------------------------------
+#
+# This is the durable fix for the "gh / git credential helper doesn't work
+# inside agent shells" problem: a LaunchAgent that pre-warms the tmux
+# server in the user's GUI (Aqua) login session at every login. That gives
+# every shell hosted by that tmux server — including ones attached over
+# Tailscale-SSH later — full login-keychain access. See the script's
+# header comment at bin/tmux-keychain-bootstrap.sh for the full root-cause
+# explanation.
+
+bold "tmux keychain bootstrap (optional, recommended)"
+
+LAUNCHAGENT_LABEL="com.dfrysinger.tmux-keychain-bootstrap"
+LAUNCHAGENT_DST="$HOME/Library/LaunchAgents/${LAUNCHAGENT_LABEL}.plist"
+LAUNCHAGENT_SRC="$REPO_ROOT/etc/${LAUNCHAGENT_LABEL}.plist"
+BOOTSTRAP_SCRIPT="$REPO_ROOT/bin/tmux-keychain-bootstrap.sh"
+
+EXISTING_LAUNCHAGENT="no"
+[ -f "$LAUNCHAGENT_DST" ] && EXISTING_LAUNCHAGENT="yes"
+
+INSTALL_LAUNCHAGENT="false"
+
+if [ "$EXISTING_LAUNCHAGENT" = "yes" ]; then
+  ok "keeping existing LaunchAgent: $LAUNCHAGENT_DST"
+  INSTALL_LAUNCHAGENT="true"  # so we still re-stamp the script path / reload below
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo "    Without this, the first \`ca <name>\` after a reboot bootstraps the"
+  echo "    tmux server from your SSH login shell, which inherits a restricted"
+  echo "    keychain context. Result: \`gh\`, the osxkeychain git helper, and"
+  echo "    anything else that reads the login keychain silently fail inside"
+  echo "    agent shells (even though they work in Terminal.app on the same Mac)."
+  echo
+  echo "    This LaunchAgent fires at every GUI login and starts a tiny anchor"
+  echo "    tmux session named \`_keychain-anchor\` so the server inherits the"
+  echo "    full login-keychain search list. One-time install."
+  printf "    Install LaunchAgent? [Y/n]: "
+  read -r LAUNCHAGENT_INPUT || LAUNCHAGENT_INPUT=""
+  case "$LAUNCHAGENT_INPUT" in
+    n|N|no|NO|false) INSTALL_LAUNCHAGENT="false" ;;
+    *)               INSTALL_LAUNCHAGENT="true" ;;
+  esac
+else
+  warn "non-interactive shell — skipping LaunchAgent install"
+  todo "install later: re-run install.sh in an interactive terminal"
+fi
+
+if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
+  # Snapshot pre-existing tmux BEFORE we launchctl-bootstrap below — the
+  # bootstrap fires the script asynchronously via RunAtLoad and may spawn
+  # its own tmux server, which would otherwise make the post-install
+  # `pgrep -x tmux` check false-positive on clean installs.
+  if pgrep -x tmux >/dev/null 2>&1; then
+    PRE_EXISTING_TMUX=yes
+  else
+    PRE_EXISTING_TMUX=no
+  fi
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+  # Substitute the absolute bootstrap-script path into the plist template.
+  # Escape sed-replacement metacharacters (`\`, `&`, and our delimiter `|`)
+  # in case the install path ever contains them; the leading newline guard
+  # via $'...' isn't needed because pgrep/launchctl already block actual
+  # newlines in usable paths.
+  BOOTSTRAP_SCRIPT_ESC=${BOOTSTRAP_SCRIPT//\\/\\\\}
+  BOOTSTRAP_SCRIPT_ESC=${BOOTSTRAP_SCRIPT_ESC//&/\\&}
+  BOOTSTRAP_SCRIPT_ESC=${BOOTSTRAP_SCRIPT_ESC//|/\\|}
+  sed "s|__SCRIPT_PATH__|$BOOTSTRAP_SCRIPT_ESC|g" "$LAUNCHAGENT_SRC" > "$LAUNCHAGENT_DST"
+  ok "installed $LAUNCHAGENT_DST"
+
+  # Bootstrap into the user's GUI domain so it takes effect this login
+  # without waiting for the next reboot. If it's already loaded (e.g.
+  # re-run of the installer), bootout first so the new plist actually
+  # gets picked up. `launchctl bootstrap` can require admin in some
+  # contexts; the user domain (gui/<uid>) does not.
+  if command -v launchctl >/dev/null 2>&1; then
+    launchctl bootout "gui/$(id -u)/$LAUNCHAGENT_LABEL" 2>/dev/null || true
+    if launchctl bootstrap "gui/$(id -u)" "$LAUNCHAGENT_DST" 2>/dev/null; then
+      ok "loaded LaunchAgent into gui/$(id -u) (will run at every login)"
+    else
+      warn "couldn't load LaunchAgent automatically — log out and back in to activate"
+    fi
+  fi
+
+  # If the user had a tmux server running BEFORE we installed (captured
+  # in PRE_EXISTING_TMUX above), it's in whatever security context it
+  # was originally launched from — most often a Tailscale-SSH shell,
+  # which means it can't see login.keychain-db. Tell them how to swap
+  # it for a GUI-context server. Killing tmux is destructive (loses
+  # scrollback / window layouts) so we don't do it automatically; named
+  # Copilot sessions resume on next ca call.
+  #
+  # Important: the LaunchAgent has RunAtLoad=true and KeepAlive=false, so
+  # it fires exactly once (when we just bootstrapped it above, and again
+  # at each GUI login) — `tmux kill-server` does NOT re-trigger it. After
+  # killing, the user must either kickstart the agent explicitly, log
+  # out / log back in, or run the bootstrap script directly from a GUI
+  # Terminal. We give them the kickstart command.
+  if [ "$PRE_EXISTING_TMUX" = "yes" ] && [ "$EXISTING_LAUNCHAGENT" = "no" ]; then
+    warn "tmux server was already running before install — it's in its original security context."
+    echo "    To activate keychain access for existing sessions:"
+    echo "      1. Let any in-flight agent work finish."
+    echo "      2. In Terminal.app on the Mac: tmux kill-server"
+    echo "      3. In Terminal.app on the Mac:"
+    echo "           launchctl kickstart -k \"gui/\$(id -u)/$LAUNCHAGENT_LABEL\""
+    echo "         (re-fires the LaunchAgent in GUI context, starting the anchor)"
+    echo "      4. Re-attach your named agents: ca alpha, ca bravo, ..."
+    echo "    Each Copilot session resumes by UUID (no conversation lost)."
+    echo "    Alternative: log out of the Mac account and log back in —"
+    echo "    the LaunchAgent fires automatically at GUI login."
+  fi
+fi
+
 # ---- Copilot CLI detection -------------------------------------------------
 
 bold "Copilot CLI"

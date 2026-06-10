@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  remote-agent-stack tmux keychain bootstrap LaunchAgent.
+
+  Installed into ~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist
+  by install.sh. The __SCRIPT_PATH__ placeholder is substituted at install
+  time with the absolute path to tmux-keychain-bootstrap.sh.
+
+  Loaded under the user's GUI/Aqua login session (gui/<uid>) so the tmux
+  server it spawns inherits the full login-keychain search list. Without
+  this, the first `ca <name>` call after a reboot bootstraps the tmux
+  server from the SSH login shell instead, and every subsequent session
+  inside that server is keychain-restricted — see the script's header
+  comment for the full story.
+
+  RunAtLoad fires once at login. KeepAlive is false because the script
+  itself is idempotent and short-lived; once the anchor session exists,
+  there's nothing more to do.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dfrysinger.tmux-keychain-bootstrap</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__SCRIPT_PATH__</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/com.dfrysinger.tmux-keychain-bootstrap.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.dfrysinger.tmux-keychain-bootstrap.err.log</string>
+</dict>
+</plist>
