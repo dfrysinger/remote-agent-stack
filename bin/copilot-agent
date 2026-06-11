@@ -126,10 +126,28 @@ fi
 #
 # UUID resolution, in priority order:
 #   1. Scan ~/.copilot/session-state/*/workspace.yaml for an existing
-#      session whose `name:` matches $NAME exactly. If multiple match
-#      (e.g., legacy duplicates), use the most recently updated one.
-#      This is what lets the wrapper adopt sessions you already had
-#      before installing remote-agent-stack.
+#      session whose `cwd:` equals $DIR (the wrapper's canonical
+#      agent-<NAME> workspace). Prefer sessions with summary_count > 0
+#      (i.e., real work has happened) over empty placeholder sessions;
+#      within each tier, pick the one with the most recent created_at.
+#
+#      We key on cwd, NOT on the `name:` field: Copilot CLI's
+#      auto-summarizer rewrites `name:` in place whenever
+#      `user_named:` is false (e.g., after a `/clear`), so a session
+#      that originally was named "kilo" can end up named
+#      "Review Chat Transcript" — which would slip past a name match
+#      and leave us starting a brand-new empty session instead of
+#      resuming the real one.
+#
+#      We prefer created_at over updated_at as the tiebreaker because
+#      `updated_at` gets bumped every time the wrapper attaches, which
+#      means a session you accidentally attached to yesterday (or that
+#      a buggy previous fallback created) keeps winning forever.
+#      `created_at` represents the user's intent to start that session
+#      and is stable. The summary_count>0 prefilter then keeps an empty
+#      session — typically a deterministic-fallback placeholder from a
+#      previous run of this script — from outranking the real work.
+#
 #   2. Otherwise, fall back to a deterministic UUIDv5 derived from the
 #      name, so the first wrapper launch creates a stable UUID and
 #      subsequent launches resume it.
@@ -138,18 +156,30 @@ fi
 # the picker / `--resume=<NAME>` paths too (cosmetic, not required).
 
 UUID=""
-UUID_UPDATED=""
+UUID_CREATED=""
+UUID_TIER=""  # "real" (summary_count>0) wins over "empty" (summary_count==0)
 SESSION_STATE_DIR="$HOME/.copilot/session-state"
 if [ -d "$SESSION_STATE_DIR" ]; then
   for ws in "$SESSION_STATE_DIR"/*/workspace.yaml; do
     [ -r "$ws" ] || continue
-    this_name="$(awk -F': ' '/^name: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
-    [ "$this_name" = "$NAME" ] || continue
+    this_cwd="$(awk -F': ' '/^cwd: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    [ "$this_cwd" = "$DIR" ] || continue
     this_id="$(awk -F': ' '/^id: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
-    this_updated="$(awk -F': ' '/^updated_at: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
-    if [ -z "$UUID_UPDATED" ] || [ "$this_updated" \> "$UUID_UPDATED" ]; then
+    this_created="$(awk -F': ' '/^created_at: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    this_count="$(awk -F': ' '/^summary_count: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    if [ -z "$this_count" ] || [ "$this_count" = "0" ]; then
+      this_tier="empty"
+    else
+      this_tier="real"
+    fi
+    # "real" tier always beats "empty"; within a tier, latest created_at wins.
+    if [ -z "$UUID" ] \
+       || { [ "$UUID_TIER" = "empty" ] && [ "$this_tier" = "real" ]; } \
+       || { [ "$UUID_TIER" = "$this_tier" ] && [ "$this_created" \> "$UUID_CREATED" ]; }
+    then
       UUID="$this_id"
-      UUID_UPDATED="$this_updated"
+      UUID_CREATED="$this_created"
+      UUID_TIER="$this_tier"
     fi
   done
 fi
