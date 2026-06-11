@@ -139,14 +139,24 @@ fi
 #      and leave us starting a brand-new empty session instead of
 #      resuming the real one.
 #
-#      We prefer created_at over updated_at as the tiebreaker because
-#      `updated_at` gets bumped every time the wrapper attaches, which
-#      means a session you accidentally attached to yesterday (or that
-#      a buggy previous fallback created) keeps winning forever.
-#      `created_at` represents the user's intent to start that session
-#      and is stable. The summary_count>0 prefilter then keeps an empty
-#      session — typically a deterministic-fallback placeholder from a
-#      previous run of this script — from outranking the real work.
+#      Within the real tier, higher summary_count wins (most
+#      accumulated work), with created_at as the final tiebreak when
+#      counts are equal. We do NOT use created_at as the primary
+#      tiebreak within real tier: if a previously-stranded empty
+#      fallback session (created today) later accumulates even one
+#      checkpoint of its own, it would otherwise promote into real
+#      tier and immediately outrank the original 37-checkpoint
+#      session via "newest wins" — re-introducing the exact bug this
+#      patch is meant to eliminate. Most-work-wins is the stable
+#      invariant; created_at is only there to disambiguate ties.
+#
+#      We prefer created_at over updated_at as the equal-count
+#      tiebreaker because `updated_at` gets bumped every time the
+#      wrapper attaches, which means a session you accidentally
+#      attached to yesterday keeps winning forever. `created_at`
+#      represents the user's intent to start that session and is
+#      stable. Within the empty tier (no candidate has done any
+#      work yet), latest created_at wins.
 #
 #   2. Otherwise, fall back to a deterministic UUIDv5 derived from the
 #      name, so the first wrapper launch creates a stable UUID and
@@ -158,6 +168,7 @@ fi
 UUID=""
 UUID_CREATED=""
 UUID_TIER=""  # "real" (summary_count>0) wins over "empty" (summary_count==0)
+UUID_COUNT=0
 SESSION_STATE_DIR="$HOME/.copilot/session-state"
 if [ -d "$SESSION_STATE_DIR" ]; then
   for ws in "$SESSION_STATE_DIR"/*/workspace.yaml; do
@@ -169,17 +180,41 @@ if [ -d "$SESSION_STATE_DIR" ]; then
     this_count="$(awk -F': ' '/^summary_count: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
     if [ -z "$this_count" ] || [ "$this_count" = "0" ]; then
       this_tier="empty"
+      this_count_num=0
     else
       this_tier="real"
+      this_count_num="$this_count"
     fi
-    # "real" tier always beats "empty"; within a tier, latest created_at wins.
-    if [ -z "$UUID" ] \
-       || { [ "$UUID_TIER" = "empty" ] && [ "$this_tier" = "real" ]; } \
-       || { [ "$UUID_TIER" = "$this_tier" ] && [ "$this_created" \> "$UUID_CREATED" ]; }
-    then
+    # Selection rules:
+    #   1. First match always wins (UUID empty).
+    #   2. real tier promotes over empty tier unconditionally.
+    #   3. Within real tier: higher summary_count wins; ties broken
+    #      by latest created_at.
+    #   4. Within empty tier: latest created_at wins.
+    should_update=false
+    if [ -z "$UUID" ]; then
+      should_update=true
+    elif [ "$UUID_TIER" = "empty" ] && [ "$this_tier" = "real" ]; then
+      should_update=true
+    elif [ "$UUID_TIER" = "real" ] && [ "$this_tier" = "empty" ]; then
+      should_update=false
+    elif [ "$this_tier" = "real" ]; then
+      if [ "$this_count_num" -gt "$UUID_COUNT" ]; then
+        should_update=true
+      elif [ "$this_count_num" -eq "$UUID_COUNT" ] && [ "$this_created" \> "$UUID_CREATED" ]; then
+        should_update=true
+      fi
+    else
+      # both empty tier
+      if [ "$this_created" \> "$UUID_CREATED" ]; then
+        should_update=true
+      fi
+    fi
+    if [ "$should_update" = "true" ]; then
       UUID="$this_id"
       UUID_CREATED="$this_created"
       UUID_TIER="$this_tier"
+      UUID_COUNT="$this_count_num"
     fi
   done
 fi
