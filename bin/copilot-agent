@@ -139,20 +139,22 @@ fi
 #      and leave us starting a brand-new empty session instead of
 #      resuming the real one.
 #
-#      Within each tier (real and empty), latest `created_at` wins.
-#      `created_at` is the strongest signal of user intent — it is
-#      set once when the session is born (including via `/new`) and
-#      never bumped afterward. We do NOT use `updated_at` because it
-#      gets bumped when Copilot CLI loads the session on resume,
-#      which would make a session you accidentally attached to keep
-#      winning forever.
+#      Within each tier (real and empty), latest `updated_at` wins
+#      — i.e., the session most recently active. `updated_at` is
+#      bumped by real activity inside Copilot CLI (user messages,
+#      tool calls, summarizer runs), not by `tmux attach` (which
+#      only reconnects the terminal without restarting the running
+#      copilot process). So `updated_at` reliably identifies the
+#      session the user was last working in, which is what `ca`
+#      should resume — including across `/new` (the new session
+#      promotes itself by being the one with fresh activity).
 #
 #      We previously ranked real-tier sessions by `summary_count`
-#      (most-work-wins), which conflicted with `/new`: a fresh
-#      session created via `/new` would have low summary_count and
-#      lose to the older long-lived session it was meant to replace.
-#      `created_at` reflects user intent and resolves that conflict
-#      correctly.
+#      (most-work-wins) and then by `created_at`. Both conflicted
+#      with real usage: most-work-wins lost to a fresh `/new`, and
+#      created_at lost to an older user-named session that was
+#      still being actively used after a `/new` experiment.
+#      `updated_at` handles both cases correctly.
 #
 #   2. Otherwise, fall back to a deterministic UUIDv5 derived from the
 #      name, so the first wrapper launch creates a stable UUID and
@@ -162,7 +164,7 @@ fi
 # the picker / `--resume=<NAME>` paths too (cosmetic, not required).
 
 UUID=""
-UUID_CREATED=""
+UUID_UPDATED=""
 UUID_TIER=""  # "real" (summary_count>0) wins over "empty" (summary_count==0)
 SESSION_STATE_DIR="$HOME/.copilot/session-state"
 if [ -d "$SESSION_STATE_DIR" ]; then
@@ -171,7 +173,7 @@ if [ -d "$SESSION_STATE_DIR" ]; then
     this_cwd="$(awk -F': ' '/^cwd: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
     [ "$this_cwd" = "$DIR" ] || continue
     this_id="$(awk -F': ' '/^id: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
-    this_created="$(awk -F': ' '/^created_at: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+    this_updated="$(awk -F': ' '/^updated_at: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
     this_count="$(awk -F': ' '/^summary_count: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
     if [ -z "$this_count" ] || [ "$this_count" = "0" ]; then
       this_tier="empty"
@@ -181,7 +183,7 @@ if [ -d "$SESSION_STATE_DIR" ]; then
     # Selection rules:
     #   1. First match always wins (UUID empty).
     #   2. real tier promotes over empty tier unconditionally.
-    #   3. Within each tier: latest created_at wins (user-intent signal).
+    #   3. Within each tier: latest updated_at wins (last-active signal).
     should_update=false
     if [ -z "$UUID" ]; then
       should_update=true
@@ -189,12 +191,12 @@ if [ -d "$SESSION_STATE_DIR" ]; then
       should_update=true
     elif [ "$UUID_TIER" = "real" ] && [ "$this_tier" = "empty" ]; then
       should_update=false
-    elif [ "$this_created" \> "$UUID_CREATED" ]; then
+    elif [ "$this_updated" \> "$UUID_UPDATED" ]; then
       should_update=true
     fi
     if [ "$should_update" = "true" ]; then
       UUID="$this_id"
-      UUID_CREATED="$this_created"
+      UUID_UPDATED="$this_updated"
       UUID_TIER="$this_tier"
     fi
   done
