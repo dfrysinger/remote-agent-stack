@@ -591,6 +591,16 @@ cat <<MANUAL
        Note: after a 'brew upgrade tmux' or 'brew upgrade tailscale',
        the version-numbered Cellar path changes — you'll need to re-add.
 
+     If you want computer-control (screenshots, AppleScript GUI driving,
+     synthetic clicks/keystrokes) to work from inside agent shells,
+     also grant tmux:
+       System Settings → Privacy & Security → Accessibility       → + $TMUX_REAL
+       System Settings → Privacy & Security → Screen Recording    → + $TMUX_REAL
+     Without these, \`screencapture\`, \`osascript\` GUI commands, and
+     anything that synthesizes mouse/keyboard events from an agent
+     shell will silently fail or return blank output. Same Cellar-path
+     and re-add-after-upgrade caveats apply.
+
   2. Authenticate the Tailscale daemon and enable Tailscale SSH:
        sudo tailscale up --ssh
        (Follow the auth URL it prints; once per machine.)
