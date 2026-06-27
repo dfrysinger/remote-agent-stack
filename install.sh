@@ -7,6 +7,7 @@
 #   - tmux + tailscale (via brew)
 #   - /etc/resolver/ts.net (MagicDNS fix for Homebrew tailscaled)
 #   - copilot-agent wrapper symlinked into /usr/local/bin (also as `ca`)
+#   - ss + vncfix GUI-access helpers symlinked into /usr/local/bin
 #   - ~/.tmux.conf managed block (hides the redundant tmux status bar)
 #
 # All operations that require root are batched into a single sudo
@@ -61,6 +62,10 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WRAPPER_SRC="$REPO_ROOT/bin/copilot-agent"
 WRAPPER_DST="/usr/local/bin/copilot-agent"
 WRAPPER_SHORT_DST="/usr/local/bin/ca"
+SS_SRC="$REPO_ROOT/bin/ss"
+SS_DST="/usr/local/bin/ss"
+VNCFIX_SRC="$REPO_ROOT/bin/vncfix"
+VNCFIX_DST="/usr/local/bin/vncfix"
 RESOLVER_SRC="$REPO_ROOT/etc/resolver-ts.net"
 RESOLVER_DST="/etc/resolver/ts.net"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/remote-agent-stack"
@@ -167,8 +172,21 @@ else
   NEED_SYMLINK=true
 fi
 
-# Ensure the wrapper is executable (no sudo needed).
-chmod +x "$WRAPPER_SRC"
+# GUI helpers (ss, vncfix) — linked into /usr/local/bin the same way as the
+# wrapper, with the same collision-avoidance as the 'ca' alias.
+for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
+  _src="${_pair%%:*}"; _dst="${_pair##*:}"
+  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; then
+    :  # already correct
+  elif [ -e "$_dst" ]; then
+    warn "$_dst already exists (points elsewhere or is not ours) — leaving it alone (skipping $(basename "$_dst"))"
+  else
+    NEED_SYMLINK=true
+  fi
+done
+
+# Ensure the wrapper + GUI helpers are executable (no sudo needed).
+chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC"
 
 # ---- single sudo block -----------------------------------------------------
 
@@ -181,6 +199,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   $NEED_RESOLVER_WRITE     && echo "    • write $RESOLVER_DST (MagicDNS resolver)"
   $NEED_USRLOCALBIN_MKDIR  && echo "    • create /usr/local/bin"
   $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST and $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
+  $NEED_SYMLINK            && echo "    • symlink $SS_DST, $VNCFIX_DST -> bin/{ss,vncfix}"
   echo
   echo "  ============================================================"
   echo "  >>>  Enter your login password at the prompt below.       <<<"
@@ -198,8 +217,12 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   WRAPPER_SRC="$WRAPPER_SRC" \
   WRAPPER_DST="$WRAPPER_DST" \
   WRAPPER_SHORT_DST="$WRAPPER_SHORT_DST" \
+  SS_SRC="$SS_SRC" \
+  SS_DST="$SS_DST" \
+  VNCFIX_SRC="$VNCFIX_SRC" \
+  VNCFIX_DST="$VNCFIX_DST" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -228,6 +251,16 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
         rm -f "$WRAPPER_SHORT_DST"
         ln -s "$WRAPPER_SRC" "$WRAPPER_SHORT_DST"
       fi
+
+      # GUI helpers (ss, vncfix): same collision-avoidance as the 'ca' alias.
+      for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
+        _src="${_pair%%:*}"; _dst="${_pair##*:}"
+        if [ ! -e "$_dst" ] || { [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; }; then
+          echo "  → symlinking $_dst"
+          rm -f "$_dst"
+          ln -s "$_src" "$_dst"
+        fi
+      done
     fi
 PRIVILEGED_BLOCK
 
@@ -236,6 +269,8 @@ PRIVILEGED_BLOCK
   $NEED_USRLOCALBIN_MKDIR  && ok "/usr/local/bin created" || true
   $NEED_SYMLINK            && ok "$WRAPPER_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && [ -L "$SS_DST" ] && [ "$(readlink "$SS_DST")" = "$SS_SRC" ] && ok "$SS_DST -> $SS_SRC" || true
+  $NEED_SYMLINK            && [ -L "$VNCFIX_DST" ] && [ "$(readlink "$VNCFIX_DST")" = "$VNCFIX_SRC" ] && ok "$VNCFIX_DST -> $VNCFIX_SRC" || true
 else
   ok "nothing to do (system already configured)"
 fi

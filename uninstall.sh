@@ -4,6 +4,7 @@
 # Removes the userland artifacts installed by install.sh:
 #   - /usr/local/bin/copilot-agent symlink
 #   - /usr/local/bin/ca symlink (short alias)
+#   - /usr/local/bin/ss and /usr/local/bin/vncfix symlinks (GUI helpers)
 #   - /etc/resolver/ts.net
 #   - ~/.tmux.conf managed block (status-bar-off settings)
 #
@@ -55,6 +56,24 @@ elif [ -e /usr/local/bin/ca ]; then
 else
   skip "/usr/local/bin/ca not present"
 fi
+
+bold "Removing GUI helpers (ss, vncfix)"
+# Same exact-match guard as the 'ca' alias: only remove links that point at
+# THIS clone's bin/ scripts; leave foreign symlinks and real files alone.
+for _pair in "ss:$REPO_ROOT/bin/ss" "vncfix:$REPO_ROOT/bin/vncfix"; do
+  _name="${_pair%%:*}"; _src="${_pair##*:}"; _dst="/usr/local/bin/$_name"
+  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; then
+    todo "sudo rm $_dst"
+    sudo rm -f "$_dst"
+    ok "removed"
+  elif [ -L "$_dst" ]; then
+    skip "$_dst symlinks to $(readlink "$_dst") — not ours, leaving alone"
+  elif [ -e "$_dst" ]; then
+    skip "$_dst exists and is not our symlink — leaving it alone"
+  else
+    skip "$_dst not present"
+  fi
+done
 
 bold "Removing MagicDNS resolver"
 if [ -f /etc/resolver/ts.net ]; then

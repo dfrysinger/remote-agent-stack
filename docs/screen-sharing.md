@@ -15,8 +15,9 @@ Two small scripts live in [`bin/`](../bin):
 
 ## Install onto PATH
 
-The installer symlinks `copilot-agent`/`ca` but not these. Symlink them
-yourself (or copy into `~/bin`):
+`install.sh` symlinks these into `/usr/local/bin` alongside
+`copilot-agent`/`ca`, so a normal install puts `ss` and `vncfix` on your
+PATH. To link them by hand (or without re-running the installer):
 
 ```bash
 ln -sf "$PWD/bin/ss"     /usr/local/bin/ss
