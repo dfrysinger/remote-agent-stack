@@ -1,0 +1,63 @@
+#!/bin/bash
+# vncfix — diagnose & fix the macOS Screen Sharing "black screen + cursor" symptom.
+#
+# Two known causes:
+#   (A) Clamshell / daemon glitch on Apple Silicon.
+#       Fix: restart screensharingd + the per-user ScreensharingAgent (this script
+#       does it automatically). Screens refreshes within a couple seconds.
+#   (B) ScreensharingAgent denied Screen Recording (TCC: kTCCServiceScreenCapture).
+#       macOS 14+ captures the screen via ScreenCaptureKit, which needs the grant.
+#       Without it the agent logs "Cannot get shareable content" and Screens shows
+#       the cursor (drawn by the daemon) over a black frame (no framebuffer).
+#       This CANNOT be fixed from a shell: SIP blocks all writes to TCC.db, and the
+#       grant requires interactive admin auth. The only fix is to toggle Screen
+#       Sharing OFF then ON in System Settings (TouchID/password), which re-seeds it.
+#
+# Run from SSH while Screens is black. Restarts the daemon+agent (cause A), then
+# scans the agent log; if it sees the Screen-Recording denial (cause B) it explains
+# the manual step and opens System Settings > Sharing for you.
+
+set -u
+UID_N=$(id -u)
+AGENT_UNIT="gui/${UID_N}/com.apple.screensharing.agent"
+DAEMON_UNIT="system/com.apple.screensharing"
+DAEMON_PLIST="/System/Library/LaunchDaemons/com.apple.screensharing.plist"
+
+echo "==> Restarting screensharingd (daemon)..."
+if ! sudo launchctl kickstart -k "$DAEMON_UNIT" 2>/dev/null; then
+  echo "    kickstart failed; trying bootout/bootstrap cycle..."
+  sudo launchctl bootout "$DAEMON_UNIT" 2>/dev/null || true
+  sudo launchctl bootstrap system "$DAEMON_PLIST" 2>/dev/null || true
+fi
+
+echo "==> Kicking the per-user ScreensharingAgent..."
+launchctl kickstart -k "$AGENT_UNIT" 2>/dev/null || true
+
+echo "==> Scanning recent agent log for a Screen-Recording (TCC) denial..."
+DENIED=$(log show --last 10m --style compact \
+  --predicate 'process == "ScreensharingAgent"' 2>/dev/null \
+  | grep -c "Cannot get shareable content")
+
+if [ "${DENIED:-0}" -gt 0 ]; then
+  cat <<'DIAG'
+
+   *** DIAGNOSIS: Screen Recording permission is DENIED for the screen-sharing agent. ***
+   ScreenCaptureKit can't grab the framebuffer, so Screens shows cursor + black.
+   Restarting the daemon does NOT fix this, and SIP blocks any CLI write to TCC.db.
+
+   FIX (~10s at the Mac or via the JetKVM; needs TouchID/password):
+     1. System Settings > General > Sharing
+     2. Toggle "Screen Sharing" OFF, wait 2s, toggle it back ON (authenticate when asked)
+     3. Reconnect Screens.
+
+   Opening System Settings > Sharing now...
+DIAG
+  open "x-apple.systempreferences:com.apple.Sharing-Settings.extension" 2>/dev/null || true
+  echo "   (If you're fully remote and can't authenticate: power on the JetKVM, or wait"
+  echo "    until you have physical access — there is no shell-only fix for this one.)"
+else
+  echo
+  echo "   No Screen-Recording denial found in the last 10m. If Screens was black, the"
+  echo "   daemon+agent restart above (clamshell glitch) should have cleared it."
+  echo "   Reconnect Screens now (or wait ~2s for it to refresh)."
+fi

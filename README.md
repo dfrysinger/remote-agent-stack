@@ -509,6 +509,10 @@ Once everything is set up:
   `tmux kill-session -t alpha`.
 - **Reattach from anywhere**: `ca alpha` on the Mac, or tap `Agent
   alpha` in iOS Termius. Same session.
+- **GUI access** (graphical desktop, not just the terminal): `ss on`
+  enables Screen Sharing for an hour and forwards it over the tailnet;
+  connect with the Screens app. See
+  [`docs/screen-sharing.md`](docs/screen-sharing.md).
 
 `tmux` sessions live in memory — they don't survive a Mac reboot. The
 wrapper relaunches Copilot CLI with the same `--session-id=<uuid>` on
@@ -619,3 +623,6 @@ Linux support and first-class Claude Code / Codex CLI backends are
   need Full Disk Access and why.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — every macOS /
   Tailscale / Copilot CLI / Termius gotcha we hit.
+- [`docs/screen-sharing.md`](docs/screen-sharing.md) — GUI access over
+  Tailscale: the `ss` / `vncfix` scripts, black-screen recovery, the
+  IPv4-blackhole workaround, and going dark without locking.
