@@ -47,7 +47,20 @@ case "$CMD" in
     echo "==> Loading + enabling Screen Sharing daemon..."
     launchctl enable "$SS_UNIT" 2>/dev/null || true
     launchctl bootstrap system "$SS_PLIST" 2>/dev/null || true
-    launchctl kickstart -k "$SS_UNIT" 2>/dev/null || true
+    # Do NOT kickstart/force-start the daemon. com.apple.screensharing is
+    # socket-activated (Sockets>Listener vnc-server, no RunAtLoad/KeepAlive):
+    # launchd holds the :5900 listener and spawns screensharingd + the
+    # ScreensharingAgent ON-DEMAND when a viewer connects, in the correct GUI
+    # session context. Force-starting it with `launchctl kickstart -k` spawns
+    # the agent OUTSIDE that context, and it then fails ScreenCaptureKit
+    # ("Cannot get shareable content") -> black screen + cursor, despite the
+    # agent having full capture entitlements. Enabling via System Settings
+    # works precisely because it relies on this on-demand launch. Just bootstrap
+    # and let the first connection start it.
+    # CAVEAT: the agent captures the ACTIVE authenticated console session. If the
+    # Mac is at the login window or you've fast-user-switched away, there is no
+    # such session and you'll still get a black screen — an OS constraint, not
+    # this script. Stay logged in at the console for the auto-off/re-enable cycle.
 
     # Verify it actually loaded
     if ! launchctl print "$SS_UNIT" >/dev/null 2>&1; then
