@@ -1,0 +1,152 @@
+#!/bin/bash
+# ~/bin/ss — toggle macOS Screen Sharing (NOT Remote Management) + tailscale serve forwarder.
+# Usage:
+#   ss on [HOURS]   default 1; schedules auto-off
+#   ss off          turns off + cancels any pending auto-off
+#   ss status       shows daemon state + pending auto-off
+
+set -e
+CMD="${1:-status}"
+HOURS="${2:-1}"
+PORT=15900
+LEASEFILE=/tmp/ss-lease.pid
+# Resolve this script's own absolute path so the auto-off lease can re-invoke it
+# regardless of where it's installed (~/bin, /usr/local/bin, a clone, etc.).
+case "$0" in
+  */*) USER_BIN="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" ;;
+  *)   USER_BIN="$(command -v "$0")" ;;
+esac
+SS_PLIST=/System/Library/LaunchDaemons/com.apple.screensharing.plist
+SS_UNIT=system/com.apple.screensharing
+
+# Re-exec with sudo for on/off
+if [ "$CMD" != "status" ] && [ "$EUID" -ne 0 ]; then
+  exec sudo --preserve-env=SUDO_USER "$0" "$@"
+fi
+RUN_USER="${SUDO_USER:-$USER}"
+
+cancel_lease() {
+  if [ -f "$LEASEFILE" ]; then
+    OLD_PID=$(cat "$LEASEFILE" 2>/dev/null || echo "")
+    if [ -n "$OLD_PID" ]; then
+      kill "$OLD_PID" 2>/dev/null || true
+      echo "Cancelled pending auto-off (was PID $OLD_PID)."
+    fi
+    rm -f "$LEASEFILE"
+  fi
+}
+
+case "$CMD" in
+  on)
+    cancel_lease
+
+    echo "==> Turning OFF Remote Management..."
+    /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+      -deactivate -stop 2>/dev/null || true
+
+    echo "==> Loading + enabling Screen Sharing daemon..."
+    launchctl enable "$SS_UNIT" 2>/dev/null || true
+    launchctl bootstrap system "$SS_PLIST" 2>/dev/null || true
+    launchctl kickstart -k "$SS_UNIT" 2>/dev/null || true
+
+    # Verify it actually loaded
+    if ! launchctl print "$SS_UNIT" >/dev/null 2>&1; then
+      echo "ERROR: Screen Sharing daemon failed to bootstrap." >&2
+      echo "  Try System Settings > General > Sharing > Screen Sharing manually." >&2
+      exit 1
+    fi
+
+    echo "==> Ensuring tailscale serve maps tailnet:$PORT -> localhost:5900..."
+    sudo -u "$RUN_USER" tailscale serve --bg --tcp $PORT tcp://localhost:5900 2>&1 \
+      | grep -vE "already|^$" || true
+
+    LEASE_SEC=$(( HOURS * 3600 ))
+    OFF_AT=$(date -v+${HOURS}H "+%Y-%m-%d %H:%M:%S")
+    nohup bash -c "sleep $LEASE_SEC && $USER_BIN off > /tmp/ss-auto-off.log 2>&1" </dev/null >/dev/null 2>&1 &
+    LEASE_PID=$!
+    disown $LEASE_PID 2>/dev/null || true
+    echo "$LEASE_PID" > "$LEASEFILE"
+
+    # Resolve this host's tailnet MagicDNS name (first DNSName in the status JSON is Self).
+    TS_DNS=$(sudo -u "$RUN_USER" tailscale status --json 2>/dev/null \
+      | grep -m1 '"DNSName"' | sed -E 's/.*"DNSName": *"([^"]*)\.".*/\1/')
+    TS_V6=$(sudo -u "$RUN_USER" tailscale status --json 2>/dev/null \
+      | grep -oE 'fd7a:[0-9a-f:]+' | head -1)
+    [ -z "$TS_DNS" ] && TS_DNS=$(scutil --get LocalHostName 2>/dev/null || hostname)
+
+    echo
+    echo "Screen Sharing is ON for $HOURS hour(s). Auto-off at $OFF_AT (PID $LEASE_PID)."
+    echo "Connect with Screens to:  ${TS_DNS}  port $PORT"
+    [ -n "$TS_V6" ] && echo "  (if IPv4 is blackholed on this host, use IPv6: [${TS_V6}] port $PORT)"
+    echo "Force-off any time:  ss off"
+    ;;
+
+  off)
+    cancel_lease
+    echo "==> Disabling Screen Sharing daemon..."
+    launchctl bootout "$SS_UNIT" 2>/dev/null || true
+    launchctl disable "$SS_UNIT" 2>/dev/null || true
+    echo
+    echo "Screen Sharing is OFF."
+    ;;
+
+  status)
+    echo "--- Screen Sharing daemon ---"
+    if launchctl print "$SS_UNIT" >/dev/null 2>&1; then
+      launchctl print "$SS_UNIT" 2>&1 | grep -E "^\s*state =" | head -1
+    else
+      echo "(not bootstrapped)"
+    fi
+    launchctl print-disabled system 2>&1 | grep -E "\"com.apple.screensharing\"" | head -1
+
+    echo "--- Port 5900 listener ---"
+    sudo lsof -iTCP:5900 -sTCP:LISTEN 2>/dev/null | head -3 || echo "(nothing listening)"
+
+    echo "--- Remote Management (should be empty) ---"
+    ps -axco command 2>/dev/null | grep -E "^ARDAgent$" \
+      && echo "  ^ ARD is running — Screens auth will fail. Run: ss on" \
+      || echo "(not running — good)"
+
+    echo "--- tailscale serve mapping ---"
+    tailscale serve status 2>&1 | grep -E "$PORT|5900" \
+      || echo "(no $PORT mapping — run: ss on)"
+
+    echo "--- Screen capture grant (black-screen check) ---"
+    # The screen-sharing AGENT (com.apple.screensharing.agent) needs a ScreenCapture
+    # (Screen Recording) grant to capture the framebuffer via ScreenCaptureKit. Without it
+    # you connect fine but see a black screen + cursor. The grant lives in SIP-protected
+    # TCC.db (unreadable even as root), so we infer the last result from the unified log:
+    # failures log "Cannot get shareable content"; successes log ScreenCaptureKit SCStream
+    # activity. Newest of the two wins. The grant persists once seeded via System Settings.
+    SS_LOG=$(log show --last 2d --predicate 'process == "ScreensharingAgent"' --style compact 2>/dev/null)
+    FAIL_TS=$(printf '%s\n' "$SS_LOG" | grep -F "Cannot get shareable content" | tail -1 | cut -c1-23)
+    OK_TS=$(printf '%s\n' "$SS_LOG" | grep -E "\(ScreenCaptureKit\).*(SCStream|stopCapture|startCapture)" | tail -1 | cut -c1-23)
+    if [ -z "$FAIL_TS" ] && [ -z "$OK_TS" ]; then
+      echo "  (no Screens session in last 2d to check — grant persists once seeded; connect to confirm)"
+    elif [ -n "$FAIL_TS" ] && { [ -z "$OK_TS" ] || [[ "$FAIL_TS" > "$OK_TS" ]]; }; then
+      echo "  WARNING: BLACK SCREEN — the screen-sharing agent can't capture (last fail $FAIL_TS)."
+      echo "    Cause: missing ScreenCapture grant for com.apple.screensharing.agent."
+      echo "    Fix:   System Settings > General > Sharing > toggle Screen Sharing OFF then ON."
+      echo "           deep link: open 'x-apple.systempreferences:com.apple.Sharing-Settings.extension'"
+    else
+      echo "  OK: agent captured successfully last session ($OK_TS). Screens should show content."
+    fi
+
+    echo "--- pending auto-off ---"
+    if [ -f "$LEASEFILE" ]; then
+      LP=$(cat "$LEASEFILE")
+      if ps -p "$LP" > /dev/null 2>&1; then
+        echo "  PID $LP scheduled to run 'ss off'"
+      else
+        echo "  stale lease file (pid $LP no longer running)"
+      fi
+    else
+      echo "  (none)"
+    fi
+    ;;
+
+  *)
+    echo "Usage: $(basename "$0") {on [HOURS] | off | status}" >&2
+    exit 1
+    ;;
+esac
