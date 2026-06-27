@@ -134,6 +134,10 @@ The installer is idempotent — safe to re-run. It:
 - Installs Homebrew (if missing), `tmux`, and the Tailscale CLI build.
 - Writes `/etc/resolver/ts.net` (the MagicDNS resolver fix).
 - Symlinks `bin/copilot-agent` and `bin/ca` into `/usr/local/bin`.
+- Stamps a managed block into `~/.tmux.conf` that hides tmux's status
+  bar (the agents are full-screen TUIs and your Termius tabs already
+  label each session). Toggle it back per-session with `prefix + b`.
+  Any hand-written `~/.tmux.conf` you already have is preserved.
 - Prints a checklist of the GUI / interactive steps it can't do for
   you — Full Disk Access grants (next step), `tailscale up --ssh`,
   first Copilot CLI auth prompt.

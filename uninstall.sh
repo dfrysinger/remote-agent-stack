@@ -5,6 +5,7 @@
 #   - /usr/local/bin/copilot-agent symlink
 #   - /usr/local/bin/ca symlink (short alias)
 #   - /etc/resolver/ts.net
+#   - ~/.tmux.conf managed block (status-bar-off settings)
 #
 # Does NOT uninstall Homebrew packages (tmux, tailscale) — those may be
 # used by other tools on your system. Run `brew uninstall tmux tailscale`
@@ -63,6 +64,33 @@ if [ -f /etc/resolver/ts.net ]; then
   ok "removed"
 else
   skip "/etc/resolver/ts.net not present"
+fi
+
+bold "Removing tmux config managed block"
+# Strip ONLY our marked block from ~/.tmux.conf; leave any hand-written
+# config the user added around it untouched. If the file ends up empty
+# (it only ever held our block), remove it entirely.
+TMUXCONF_DST="$HOME/.tmux.conf"
+TMUX_BLOCK_BEGIN="# >>> remote-agent-stack (managed) >>>"
+TMUX_BLOCK_END="# <<< remote-agent-stack (managed) <<<"
+if [ -f "$TMUXCONF_DST" ] && grep -qF "$TMUX_BLOCK_BEGIN" "$TMUXCONF_DST"; then
+  TMUX_TMP="$(mktemp)"
+  awk -v b="$TMUX_BLOCK_BEGIN" -v e="$TMUX_BLOCK_END" '
+    $0==b { inblk=1; next }
+    $0==e { inblk=0; next }
+    !inblk { print }
+  ' "$TMUXCONF_DST" > "$TMUX_TMP"
+  # Collapse to empty if nothing but blank lines remain.
+  if [ -n "$(tr -d '[:space:]' < "$TMUX_TMP")" ]; then
+    mv "$TMUX_TMP" "$TMUXCONF_DST"
+    ok "removed managed block from $TMUXCONF_DST (kept your other config)"
+  else
+    rm -f "$TMUX_TMP" "$TMUXCONF_DST"
+    ok "removed $TMUXCONF_DST (it only held our block)"
+  fi
+  pgrep -x tmux >/dev/null 2>&1 && tmux set -g status on 2>/dev/null || true
+else
+  skip "no remote-agent-stack block in $TMUXCONF_DST"
 fi
 
 if $PURGE; then

@@ -7,6 +7,7 @@
 #   - tmux + tailscale (via brew)
 #   - /etc/resolver/ts.net (MagicDNS fix for Homebrew tailscaled)
 #   - copilot-agent wrapper symlinked into /usr/local/bin (also as `ca`)
+#   - ~/.tmux.conf managed block (hides the redundant tmux status bar)
 #
 # All operations that require root are batched into a single sudo
 # invocation, so you only type your password once even on systems where
@@ -543,6 +544,62 @@ if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
     echo "          a few seconds and the new server will be GUI-context)"
     echo "      3. Re-attach your named agents: ca alpha, ca bravo, ..."
     echo "    Each Copilot session resumes by UUID (no conversation lost)."
+  fi
+fi
+
+# ---- tmux config (status bar off) -----------------------------------------
+#
+# The agents are full-screen Copilot CLI TUIs that own their own mouse and
+# scrollback, and the terminal/Termius tabs already label each session, so
+# tmux's status bar is just redundant chrome. We hide it by default.
+#
+# The settings live in etc/tmux.conf and are stamped into ~/.tmux.conf inside
+# a clearly-marked managed block, so we never clobber a hand-written config:
+#   - no ~/.tmux.conf            -> created with just our block
+#   - has our managed block      -> block replaced in place (idempotent)
+#   - has unrelated user config  -> our block appended, existing lines kept
+
+bold "tmux config (status bar off)"
+
+TMUXCONF_DST="$HOME/.tmux.conf"
+TMUXCONF_SRC="$REPO_ROOT/etc/tmux.conf"
+TMUX_BLOCK_BEGIN="# >>> remote-agent-stack (managed) >>>"
+TMUX_BLOCK_END="# <<< remote-agent-stack (managed) <<<"
+
+if [ ! -f "$TMUXCONF_SRC" ]; then
+  warn "etc/tmux.conf missing from this clone — skipping tmux config"
+else
+  # Build the managed block: markers wrapped around the repo's canonical conf.
+  TMUX_BLOCK="$(printf '%s\n' "$TMUX_BLOCK_BEGIN"; cat "$TMUXCONF_SRC"; printf '%s\n' "$TMUX_BLOCK_END")"
+
+  if [ ! -f "$TMUXCONF_DST" ]; then
+    printf '%s\n' "$TMUX_BLOCK" > "$TMUXCONF_DST"
+    ok "created $TMUXCONF_DST (status bar off; prefix + b to toggle)"
+  elif grep -qF "$TMUX_BLOCK_BEGIN" "$TMUXCONF_DST"; then
+    # Replace the existing managed block in place; leave the rest untouched.
+    TMUX_TMP="$(mktemp)"
+    awk -v b="$TMUX_BLOCK_BEGIN" -v e="$TMUX_BLOCK_END" '
+      $0==b { inblk=1; next }
+      $0==e { inblk=0; next }
+      !inblk { print }
+    ' "$TMUXCONF_DST" > "$TMUX_TMP"
+    printf '%s\n' "$TMUX_BLOCK" >> "$TMUX_TMP"
+    mv "$TMUX_TMP" "$TMUXCONF_DST"
+    ok "updated managed block in $TMUXCONF_DST"
+  else
+    # Preserve the user's existing config; append our block at the end.
+    printf '\n%s\n' "$TMUX_BLOCK" >> "$TMUXCONF_DST"
+    ok "appended managed block to existing $TMUXCONF_DST (kept your config)"
+  fi
+
+  # Apply live if a server is already running, so the bar disappears now
+  # rather than only on the next server start.
+  if pgrep -x tmux >/dev/null 2>&1; then
+    if tmux source-file "$TMUXCONF_DST" >/dev/null 2>&1; then
+      ok "reloaded tmux config into the running server"
+    else
+      warn "couldn't reload tmux config automatically — run: tmux source-file ~/.tmux.conf"
+    fi
   fi
 fi
 
