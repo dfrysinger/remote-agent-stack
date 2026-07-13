@@ -11,10 +11,11 @@
 #   copilot-agent <name>      (or: ca <name>)
 #   claude-agent  <name>      (or: cc <name>)
 #
-# Layout: each backend has its own workspace root, subdirs named after the
-# agent — no prefix noise:
-#   copilot: $COPILOT_WORKSPACE_BASE/<name>   (tmux session: <name>)
-#   claude : $CLAUDE_WORKSPACE_BASE/<name>    (tmux session: claude-<name>)
+# Layout: each backend has its own workspace root; inside each, agents
+# live in AGENT_DIR_PREFIX-prefixed subdirs so they're easy to spot as
+# agent workspaces alongside other project dirs:
+#   copilot: $COPILOT_WORKSPACE_BASE/agent-<name>   (tmux session: <name>)
+#   claude : $CLAUDE_WORKSPACE_BASE/agent-<name>    (tmux session: claude-<name>)
 #
 # The claude tmux session name is prefixed only so `ca alpha` and `cc alpha`
 # can coexist on the same tmux server without collision.
@@ -24,6 +25,7 @@
 #   CLAUDE_WORKSPACE_BASE    default: ~/Library/CloudStorage/Dropbox/claude-workspace
 #   COPILOT_BIN              default: copilot
 #   CLAUDE_BIN               default: claude
+#   AGENT_DIR_PREFIX         default: agent-
 #   ALLOW_ALL                default: false
 #     copilot: --allow-all
 #     claude : --dangerously-skip-permissions
@@ -54,6 +56,7 @@ fi
 : "${CLAUDE_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/claude-workspace}"
 : "${COPILOT_BIN:=copilot}"
 : "${CLAUDE_BIN:=claude}"
+: "${AGENT_DIR_PREFIX:=agent-}"
 
 case "$BACKEND" in
   copilot)
@@ -84,8 +87,8 @@ Options:
 
 Config:
   ~/.config/remote-agent-stack/config
-  Env: COPILOT_WORKSPACE_BASE, CLAUDE_WORKSPACE_BASE,
-       COPILOT_BIN, CLAUDE_BIN, ALLOW_ALL, MAILBOX_INTEGRATION
+  Env: COPILOT_WORKSPACE_BASE, CLAUDE_WORKSPACE_BASE, COPILOT_BIN,
+       CLAUDE_BIN, AGENT_DIR_PREFIX, ALLOW_ALL, MAILBOX_INTEGRATION
 USAGE
 }
 
@@ -99,7 +102,7 @@ if [ $# -ne 1 ] || [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
 fi
 
 NAME="$1"
-DIR="$WORKSPACE_BASE/$NAME"
+DIR="$WORKSPACE_BASE/${AGENT_DIR_PREFIX}${NAME}"
 SESSION="${SESSION_PREFIX}${NAME}"
 
 # ---- preflight -------------------------------------------------------------
