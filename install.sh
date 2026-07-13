@@ -154,8 +154,68 @@ NEED_RESOLVER_WRITE=false
 NEED_USRLOCALBIN_MKDIR=false
 NEED_SYMLINK=false
 
-if ! pgrep -xq tailscaled; then
+# ---- tailscaled: detect sandboxed / non-brew build ------------------------
+#
+# The Homebrew tailscaled formula runs unsandboxed and can bind :22 for
+# Tailscale SSH. The GUI Tailscale.app (both Mac App Store and, since
+# ~1.98, the standalone download from tailscale.com) ships a sandboxed
+# daemon that refuses `tailscale up --ssh` with:
+#   "The Tailscale SSH server does not run in sandboxed Tailscale GUI builds."
+#
+# The old logic (`if ! pgrep -xq tailscaled`) treated any running tailscaled
+# as "already good" and silently skipped `brew services start tailscale`.
+# That left users with a sandboxed daemon in place and no obvious signal
+# that Tailscale SSH would refuse to enable. Fix: identify the running
+# binary's path and warn loudly if it isn't Homebrew's.
+
+_running_tailscaled_path() {
+  # Print the executable path of the first running tailscaled process, or
+  # empty string if none. Uses `ps -Ao command` because on macOS that
+  # shows argv[0] as the absolute path when the process was launched via
+  # one (which is how launchd and brew services both start tailscaled).
+  # We deliberately match only exec paths that END in /tailscaled so we
+  # don't false-positive on the io.tailscale.ipn.macsys.* system extension.
+  ps -Ao command 2>/dev/null \
+    | awk '{ print $1 }' \
+    | awk '/\/tailscaled$/ { print; exit }'
+}
+
+RUNNING_TAILSCALED_PATH="$(_running_tailscaled_path)"
+BREW_TAILSCALED_PATH="$(brew --prefix tailscale 2>/dev/null)/bin/tailscaled"
+
+if [ -z "$RUNNING_TAILSCALED_PATH" ]; then
   NEED_TAILSCALED_START=true
+elif [ -n "$BREW_TAILSCALED_PATH" ] && [ "$RUNNING_TAILSCALED_PATH" = "$BREW_TAILSCALED_PATH" ]; then
+  :  # already running from brew, good
+else
+  # A tailscaled is running but it isn't brew's — most likely the sandboxed
+  # GUI Tailscale.app daemon at /usr/local/bin/tailscaled. Do NOT run
+  # `brew services start tailscale` (would silently no-op or race); warn
+  # the user with concrete switchover commands instead.
+  bold "Tailscale daemon"
+  warn "non-Homebrew tailscaled is running: $RUNNING_TAILSCALED_PATH"
+  cat <<TSSWITCH
+    That daemon is almost certainly the sandboxed Tailscale.app GUI
+    build, which refuses to run Tailscale SSH ("The Tailscale SSH
+    server does not run in sandboxed Tailscale GUI builds.").
+
+    Switch to Homebrew's tailscaled before enabling SSH:
+
+      osascript -e 'quit app "Tailscale"'
+      sudo "$RUNNING_TAILSCALED_PATH" uninstall-system-daemon
+      sudo brew services start tailscale
+      sudo tailscale up --ssh --accept-routes    # re-auth when prompted
+
+    You'll be asked to visit an auth URL — brew's tailscaled has its
+    own state dir and doesn't inherit the GUI daemon's login.
+
+    Skipping "brew services start tailscale" for now; re-run this
+    installer after the switch to finish setup.
+TSSWITCH
+  # We intentionally do NOT set NEED_TAILSCALED_START=true here — we
+  # want the install to proceed for the parts it CAN still complete
+  # (symlinks, resolver, tmux config) without also trying to poke
+  # brew's tailscaled while the GUI one is holding the socket.
 fi
 
 if [ ! -f "$RESOLVER_DST" ] || ! cmp -s "$RESOLVER_SRC" "$RESOLVER_DST"; then

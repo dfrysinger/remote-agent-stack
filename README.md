@@ -188,6 +188,21 @@ the Mac joins the tailnet. The `--ssh` flag tells `tailscaled` to bind
 a Tailscale SSH server on `:22` (replacing macOS's built-in Remote
 Login, which on a managed Mac MDM keeps disabling anyway).
 
+> **Gotcha — sandboxed GUI Tailscale.app:** if you already have
+> `/Applications/Tailscale.app` running its own `tailscaled` (both the
+> Mac App Store build and, since ~1.98, the standalone download from
+> tailscale.com are sandboxed), `tailscale up --ssh` refuses with:
+>
+> > The Tailscale SSH server does not run in sandboxed Tailscale GUI builds.
+>
+> The installer detects this and prints the switchover steps. In
+> short: quit the GUI (`osascript -e 'quit app "Tailscale"'`),
+> uninstall its system daemon
+> (`sudo /usr/local/bin/tailscaled uninstall-system-daemon`), start
+> Homebrew's version (`sudo brew services start tailscale`), then
+> re-run `sudo tailscale up --ssh --accept-routes` (re-auth once
+> because brew's tailscaled has its own state dir).
+
 ### 1.6 — Add an SSH ACL rule
 
 Tailscale SSH **only** binds `:22` if your tailnet ACL contains at
