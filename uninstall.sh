@@ -2,8 +2,8 @@
 # remote-agent-stack uninstaller
 #
 # Removes the userland artifacts installed by install.sh:
-#   - /usr/local/bin/copilot-agent symlink
-#   - /usr/local/bin/ca symlink (short alias)
+#   - /usr/local/bin/copilot-agent + ca symlinks (copilot backend)
+#   - /usr/local/bin/claude-agent  + cc symlinks (claude  backend)
 #   - /usr/local/bin/ss and /usr/local/bin/vncfix symlinks (GUI helpers)
 #   - /etc/resolver/ts.net
 #   - ~/.tmux.conf managed block (status-bar-off settings)
@@ -41,21 +41,23 @@ else
   skip "/usr/local/bin/copilot-agent not present"
 fi
 
-bold "Removing 'ca' short alias"
-# Only remove the link if it points at THIS clone's wrapper (exact absolute
+bold "Removing wrapper aliases (ca, claude-agent, cc)"
+# Only remove links that point at THIS clone's wrapper (exact absolute
 # match). Anything else — a foreign tool's symlink, a hand-rolled alias, a
 # real file — is left alone.
-if [ -L /usr/local/bin/ca ] && [ "$(readlink /usr/local/bin/ca)" = "$WRAPPER_SRC" ]; then
-  todo "sudo rm /usr/local/bin/ca"
-  sudo rm -f /usr/local/bin/ca
-  ok "removed"
-elif [ -L /usr/local/bin/ca ]; then
-  skip "/usr/local/bin/ca symlinks to $(readlink /usr/local/bin/ca) — not ours, leaving alone"
-elif [ -e /usr/local/bin/ca ]; then
-  skip "/usr/local/bin/ca exists and is not our symlink — leaving it alone"
-else
-  skip "/usr/local/bin/ca not present"
-fi
+for _dst in /usr/local/bin/ca /usr/local/bin/claude-agent /usr/local/bin/cc; do
+  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
+    todo "sudo rm $_dst"
+    sudo rm -f "$_dst"
+    ok "removed $_dst"
+  elif [ -L "$_dst" ]; then
+    skip "$_dst symlinks to $(readlink "$_dst") — not ours, leaving alone"
+  elif [ -e "$_dst" ]; then
+    skip "$_dst exists and is not our symlink — leaving it alone"
+  else
+    skip "$_dst not present"
+  fi
+done
 
 bold "Removing GUI helpers (ss, vncfix)"
 # Same exact-match guard as the 'ca' alias: only remove links that point at

@@ -62,6 +62,8 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WRAPPER_SRC="$REPO_ROOT/bin/copilot-agent"
 WRAPPER_DST="/usr/local/bin/copilot-agent"
 WRAPPER_SHORT_DST="/usr/local/bin/ca"
+CLAUDE_WRAPPER_DST="/usr/local/bin/claude-agent"
+CLAUDE_WRAPPER_SHORT_DST="/usr/local/bin/cc"
 SS_SRC="$REPO_ROOT/bin/ss"
 SS_DST="/usr/local/bin/ss"
 VNCFIX_SRC="$REPO_ROOT/bin/vncfix"
@@ -172,6 +174,20 @@ else
   NEED_SYMLINK=true
 fi
 
+# Same collision-avoidance for the claude-agent long name and the 'cc' short
+# alias. All four names ('copilot-agent', 'ca', 'claude-agent', 'cc') point at
+# the same multi-call wrapper — backend is chosen from $0's basename inside
+# the script.
+for _dst in "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST"; do
+  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
+    :  # already correct
+  elif [ -e "$_dst" ]; then
+    warn "$_dst already exists (points elsewhere or is not ours) — leaving it alone (skipping $(basename "$_dst"))"
+  else
+    NEED_SYMLINK=true
+  fi
+done
+
 # GUI helpers (ss, vncfix) — linked into /usr/local/bin the same way as the
 # wrapper, with the same collision-avoidance as the 'ca' alias.
 for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
@@ -198,7 +214,8 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   $NEED_TAILSCALED_START   && echo "    • start tailscaled (brew services start tailscale)"
   $NEED_RESOLVER_WRITE     && echo "    • write $RESOLVER_DST (MagicDNS resolver)"
   $NEED_USRLOCALBIN_MKDIR  && echo "    • create /usr/local/bin"
-  $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST and $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
+  $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST, $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
+  $NEED_SYMLINK            && echo "    • symlink $CLAUDE_WRAPPER_DST, $CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC"
   $NEED_SYMLINK            && echo "    • symlink $SS_DST, $VNCFIX_DST -> bin/{ss,vncfix}"
   echo
   echo "  ============================================================"
@@ -217,12 +234,14 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   WRAPPER_SRC="$WRAPPER_SRC" \
   WRAPPER_DST="$WRAPPER_DST" \
   WRAPPER_SHORT_DST="$WRAPPER_SHORT_DST" \
+  CLAUDE_WRAPPER_DST="$CLAUDE_WRAPPER_DST" \
+  CLAUDE_WRAPPER_SHORT_DST="$CLAUDE_WRAPPER_SHORT_DST" \
   SS_SRC="$SS_SRC" \
   SS_DST="$SS_DST" \
   VNCFIX_SRC="$VNCFIX_SRC" \
   VNCFIX_DST="$VNCFIX_DST" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,CLAUDE_WRAPPER_DST,CLAUDE_WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -243,14 +262,17 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
       rm -f "$WRAPPER_DST"
       ln -s "$WRAPPER_SRC" "$WRAPPER_DST"
 
-      # Short 'ca' alias: only create/replace if absent, or already a symlink
-      # pointing at THIS wrapper. Leave any pre-existing real file OR foreign
-      # symlink alone (collision avoidance).
-      if [ ! -e "$WRAPPER_SHORT_DST" ] || { [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ]; }; then
-        echo "  → symlinking $WRAPPER_SHORT_DST"
-        rm -f "$WRAPPER_SHORT_DST"
-        ln -s "$WRAPPER_SRC" "$WRAPPER_SHORT_DST"
-      fi
+      # Short 'ca' alias + claude-agent names: only create/replace if absent,
+      # or already a symlink pointing at THIS wrapper. Leave any pre-existing
+      # real file OR foreign symlink alone (collision avoidance). All four
+      # names point at the same multi-call wrapper.
+      for _alias_dst in "$WRAPPER_SHORT_DST" "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST"; do
+        if [ ! -e "$_alias_dst" ] || { [ -L "$_alias_dst" ] && [ "$(readlink "$_alias_dst")" = "$WRAPPER_SRC" ]; }; then
+          echo "  → symlinking $_alias_dst"
+          rm -f "$_alias_dst"
+          ln -s "$WRAPPER_SRC" "$_alias_dst"
+        fi
+      done
 
       # GUI helpers (ss, vncfix): same collision-avoidance as the 'ca' alias.
       for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
@@ -269,6 +291,8 @@ PRIVILEGED_BLOCK
   $NEED_USRLOCALBIN_MKDIR  && ok "/usr/local/bin created" || true
   $NEED_SYMLINK            && ok "$WRAPPER_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_SHORT_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$SS_DST" ] && [ "$(readlink "$SS_DST")" = "$SS_SRC" ] && ok "$SS_DST -> $SS_SRC" || true
   $NEED_SYMLINK            && [ -L "$VNCFIX_DST" ] && [ "$(readlink "$VNCFIX_DST")" = "$VNCFIX_SRC" ] && ok "$VNCFIX_DST -> $VNCFIX_SRC" || true
 else
@@ -342,14 +366,16 @@ fi
 
 bold "Mailbox integration (optional)"
 
-# Smart default: if the plugin is already installed, suggest yes; else no.
-MAILBOX_PLUGIN_PATH="$HOME/.copilot/installed-plugins/_direct/dfrysinger--skills/skills/mailbox"
-if [ -d "$MAILBOX_PLUGIN_PATH" ]; then
+# Smart default: if the plugin is already installed for either backend,
+# suggest yes; else no.
+MAILBOX_COPILOT_PATH="$HOME/.copilot/installed-plugins/_direct/dfrysinger--skills/skills/mailbox"
+MAILBOX_CLAUDE_PATH="$HOME/.claude/plugins/repos/dfrysinger/skills/skills/mailbox"
+if [ -d "$MAILBOX_COPILOT_PATH" ] || [ -d "$MAILBOX_CLAUDE_PATH" ]; then
   MAILBOX_DEFAULT="yes"
   MAILBOX_DEFAULT_REASON="dfrysinger-skills/mailbox plugin already installed"
 else
   MAILBOX_DEFAULT="no"
-  MAILBOX_DEFAULT_REASON="dfrysinger-skills plugin not detected (install via Copilot CLI: /plugin install dfrysinger/skills)"
+  MAILBOX_DEFAULT_REASON="dfrysinger-skills plugin not detected (install via the CLI you use: /plugin install dfrysinger/skills)"
 fi
 
 # Read existing setting from config (re-runs don't pester).
@@ -441,28 +467,40 @@ mkdir -p "$CONFIG_DIR"
 # COPILOT_BIN and AGENT_DIR_PREFIX stay as commented defaults — the wrapper
 # falls back to its own defaults if they're absent.
 cat > "$CONFIG_DIR/config" <<EOF
-# remote-agent-stack — copilot-agent wrapper config
+# remote-agent-stack — agent wrapper config
 # Re-generated by install.sh; safe to edit by hand.
+#
+# One wrapper serves two backends, chosen by the invocation name:
+#   copilot-agent / ca  -> Copilot CLI       (workspace: agent-<Name>)
+#   claude-agent  / cc  -> Claude Code CLI   (workspace: claude-<Name>)
 
 # WORKSPACE_BASE: where agent working directories live.
-#   Each agent <Name> uses: \$WORKSPACE_BASE/agent-<Name>  (case-preserved)
+#   copilot backend: \$WORKSPACE_BASE/agent-<Name>
+#   claude  backend: \$WORKSPACE_BASE/claude-<Name>
 WORKSPACE_BASE="$WORKSPACE_BASE_RESOLVED"
 
 # COPILOT_BIN: name of the Copilot CLI binary (must be in PATH).
 # COPILOT_BIN="copilot"
 
-# AGENT_DIR_PREFIX: prefix for per-agent directory names.
-# AGENT_DIR_PREFIX="agent-"
+# COPILOT_DIR_PREFIX: prefix for copilot-backend per-agent directory names.
+# (Alias: AGENT_DIR_PREFIX, kept for backward compatibility.)
+# COPILOT_DIR_PREFIX="agent-"
+
+# CLAUDE_BIN: name of the Claude Code CLI binary (must be in PATH).
+# CLAUDE_BIN="claude"
+
+# CLAUDE_DIR_PREFIX: prefix for claude-backend per-agent directory names.
+# CLAUDE_DIR_PREFIX="claude-"
 
 # MAILBOX_INTEGRATION: enable cross-session message/file handoff via the
-# optional dfrysinger-skills `mailbox` skill. When "true", ca will poke
-# the recipient's tmux pane on attach + new-session if pending mail
+# optional dfrysinger-skills \`mailbox\` skill. When "true", the wrapper
+# pokes the recipient's tmux pane on attach + new-session if pending mail
 # exists. When unset or "false", the mailbox hook is skipped entirely.
 MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
 
-# ALLOW_ALL: when "true", ca passes --allow-all to copilot on new-session
-# launch (auto-approves all tools, paths, and URLs). Personal-machine
-# convenience; do NOT enable in shared environments.
+# ALLOW_ALL: when "true", the wrapper skips permission prompts on
+# new-session launch (copilot: --allow-all; claude: --dangerously-skip-permissions).
+# Personal-machine convenience; do NOT enable in shared environments.
 ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 EOF
 ok "wrote $CONFIG_DIR/config"
@@ -638,15 +676,26 @@ else
   fi
 fi
 
-# ---- Copilot CLI detection -------------------------------------------------
+# ---- Backend CLI detection -------------------------------------------------
+#
+# Both backends are optional at install time — the wrapper enforces
+# "backend binary must be in PATH" at launch. Install only the ones you
+# actually plan to use.
 
-bold "Copilot CLI"
+bold "Backend CLIs"
 
 if have copilot; then
   ok "copilot CLI found ($(copilot --version 2>&1 | head -1))"
 else
-  warn "copilot CLI not found in PATH."
+  warn "copilot CLI not found in PATH — 'ca' / 'copilot-agent' will error until installed."
   echo "    Install per https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli"
+fi
+
+if have claude; then
+  ok "claude CLI found ($(claude --version 2>&1 | head -1))"
+else
+  warn "claude CLI not found in PATH — 'cc' / 'claude-agent' will error until installed."
+  echo "    Install per https://docs.claude.com/en/docs/claude-code/quickstart"
 fi
 
 # ---- manual steps ---------------------------------------------------------
@@ -697,15 +746,20 @@ cat <<MANUAL
        sudo tailscale up --ssh
        (Follow the auth URL it prints; once per machine.)
 
-  3. First Copilot CLI launch will ask:
+  3. First Copilot CLI launch (if you use the copilot backend) will ask:
        "System vault not available — store token in plain text config file?"
      Answer Yes. The token lands in ~/.copilot/config.json (mode 600).
 
+     First Claude Code CLI launch (if you use the claude backend) will
+     prompt for authentication in the terminal — follow the on-screen
+     login flow.
+
   4. Test:
-       ca alpha        # (long form: copilot-agent alpha)
+       ca alpha        # copilot backend  (long form: copilot-agent alpha)
+       cc alpha        # claude  backend  (long form: claude-agent  alpha)
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
-       ca alpha
+       ca alpha        # or: cc alpha
        ca bravo
        ...
 
