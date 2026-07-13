@@ -1,15 +1,17 @@
 # remote-agent-stack
 
 A macOS bootstrap that turns one Mac into a always-reachable host for
-running named AI agent sessions ([GitHub Copilot
-CLI](https://github.com/github/copilot-cli) today; same pattern works
-for Claude Code or Codex CLI with a one-line script tweak) and reach
-them from any device — phone, tablet, another laptop — over [Tailscale
-SSH](https://tailscale.com/kb/1193/tailscale-ssh) and `tmux`, with
-[Termius](https://termius.com) as the terminal client.
+running named AI agent sessions — [GitHub Copilot
+CLI](https://github.com/github/copilot-cli) and [Claude Code
+CLI](https://docs.claude.com/en/docs/claude-code) are both first-class
+backends, chosen per-command (`ca alpha` for Copilot, `cc alpha` for
+Claude) — and reach them from any device (phone, tablet, another
+laptop) over [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+and `tmux`, with [Termius](https://termius.com) as the terminal
+client.
 
 The end state: tap a host in Termius on your phone, land in the same
-Copilot CLI conversation your laptop left mid-thought.
+agent CLI conversation your laptop left mid-thought.
 
 This README is the full setup walkthrough — fresh Mac to phone to
 desktop. If you already have parts of this stack working, jump to the
@@ -34,11 +36,19 @@ section you need from the table of contents.
 
 ## What you get
 
-- A `copilot-agent <name>` wrapper (also installed as `ca`) that
-  launches or reattaches to a named agent session — keychain unlock,
-  `tmux` session management, and resumption of an existing Copilot CLI
-  session by stable session ID (`copilot --session-id=<uuid>
-  --name=<name> --remote`) all handled.
+- A single multi-call wrapper (`bin/agent`) installed under four names
+  — `ca` / `copilot-agent` for the Copilot backend, `cc` /
+  `claude-agent` for the Claude Code backend — that launches or
+  reattaches to a named agent session. Keychain unlock, `tmux` session
+  management, and best-effort resumption of the previous CLI session
+  for that name (Copilot: stable UUID via `--session-id`; Claude:
+  `--continue` when the workspace has an existing session) are all
+  handled.
+
+  Each backend has its own workspace root and its own tmux session
+  namespace, so the two never collide:
+    - `ca alpha` → workspace `$COPILOT_WORKSPACE_BASE/agent-alpha`, tmux `alpha`
+    - `cc alpha` → workspace `$CLAUDE_WORKSPACE_BASE/agent-alpha`,  tmux `claude-alpha`
 - A one-shot installer for OS-level prerequisites: Homebrew, `tmux`,
   Tailscale (CLI build), and the MagicDNS resolver fix that Homebrew's
   Tailscale formula leaves out.
@@ -133,7 +143,9 @@ The installer is idempotent — safe to re-run. It:
 
 - Installs Homebrew (if missing), `tmux`, and the Tailscale CLI build.
 - Writes `/etc/resolver/ts.net` (the MagicDNS resolver fix).
-- Symlinks `bin/copilot-agent` and `bin/ca` into `/usr/local/bin`.
+- Symlinks four names into `/usr/local/bin` — `copilot-agent`,
+  `ca`, `claude-agent`, `cc` — all pointing at the same multi-call
+  wrapper (`bin/agent`).
 - Stamps a managed block into `~/.tmux.conf` that hides tmux's status
   bar (the agents are full-screen TUIs and your Termius tabs already
   label each session). Toggle it back per-session with `prefix + b`.
@@ -209,63 +221,82 @@ sudo tailscale debug netmap | python3 -c \
 to the wrong tailnet or the ACL has a syntax error — see
 [`docs/tailscale.md`](docs/tailscale.md).
 
-### 1.7 — First Copilot CLI launch
+### 1.7 — First backend CLI launch
 
-Install Copilot CLI per [its own
-instructions](https://github.com/github/copilot-cli) (`brew install
-copilot-cli` works once it's published; otherwise follow the README
-there).
+Install whichever backend CLI(s) you plan to use:
 
-The first time you launch `copilot`, it asks:
+- **Copilot CLI** — per [its own
+  instructions](https://github.com/github/copilot-cli) (`brew install
+  copilot-cli` works once it's published; otherwise follow the README
+  there). The first launch asks:
 
-> System vault not available — store token in plain text config file?
+  > System vault not available — store token in plain text config file?
 
-**Answer Yes.** The macOS keychain prompts the GUI for unlock, which
-there's nobody to dismiss when you're SSH'd in from a phone — the
-keychain stays locked and Copilot CLI stalls. The plaintext fallback
-lives at `~/.copilot/config.json` with mode `0600`, inside the
-FileVault-encrypted home volume. The risk delta over the keychain is
-small; the operational benefit (Copilot CLI just works over SSH) is
-large.
+  **Answer Yes.** The macOS keychain prompts the GUI for unlock, which
+  there's nobody to dismiss when you're SSH'd in from a phone — the
+  keychain stays locked and Copilot CLI stalls. The plaintext fallback
+  lives at `~/.copilot/config.json` with mode `0600`, inside the
+  FileVault-encrypted home volume. The risk delta over the keychain is
+  small; the operational benefit (Copilot CLI just works over SSH) is
+  large.
 
-### 1.8 — Workspace location
+- **Claude Code CLI** — per [the Claude Code
+  quickstart](https://docs.claude.com/en/docs/claude-code/quickstart).
+  The first launch opens an in-terminal login flow — follow the
+  prompts to authenticate; the token lands under `~/.claude/`.
 
-The installer asks where agent workspaces should live (one directory
-per agent — e.g., `agent-alpha/`, `agent-bravo/` — under a parent base
-directory). It auto-picks a smart default and lets you override:
+You can install one, the other, or both. The wrapper enforces the
+presence of the backend binary in PATH only at launch time.
 
-- **If you have Dropbox installed**, the default is
-  `~/Library/CloudStorage/Dropbox/copilot-workspace` — workspaces sync
-  across all your Macs out of the box.
-- **If you don't have Dropbox**, the default is
-  `~/copilot-workspace`.
+### 1.8 — Workspace locations
 
-Press Enter to accept the default, or type any path you like (`~`,
-`$HOME`, and shell expansions all work). Re-running `install.sh` later
-keeps your existing choice and skips the prompt.
+Each backend has its own root directory; inside each, agents are
+`agent-<name>/` subdirs (e.g., `agent-alpha/`, `agent-bravo/`). The
+installer asks for both roots and auto-picks smart defaults:
 
-To pick a path non-interactively (or from a script):
+- **With Dropbox installed** (recommended — workspaces sync across
+  Macs):
+  - Copilot: `~/Library/CloudStorage/Dropbox/copilot-workspace`
+  - Claude:  `~/Library/CloudStorage/Dropbox/claude-workspace`
+- **Without Dropbox**:
+  - Copilot: `~/copilot-workspace`
+  - Claude:  `~/claude-workspace`
+
+Press Enter to accept a default, or type any path (`~`, `$HOME`, and
+shell expansions all work). Re-running `install.sh` later keeps
+existing choices and skips the prompts.
+
+To pick paths non-interactively (or from a script):
 
 ```bash
-./install.sh --workspace-base ~/code/copilot-workspace
+./install.sh \
+  --copilot-workspace-base ~/code/copilot-workspace \
+  --claude-workspace-base  ~/code/claude-workspace
 ```
 
-This writes `WORKSPACE_BASE="…"` into
+This writes `COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` into
 `~/.config/remote-agent-stack/config`. Edit that file directly any
-time to move the workspace base later (you'll have to move existing
-`agent-<name>/` directories by hand).
+time to move a workspace base later (you'll have to move existing
+`<name>/` directories under it by hand).
 
 ### 1.9 — Test the wrapper locally
 
+Copilot backend:
+
 ```bash
-ca alpha
+ca alpha        # tmux session `alpha`, workspace `$COPILOT_WORKSPACE_BASE/agent-alpha/`
 ```
 
-You should land inside a `tmux` session named `alpha`, in
-`$WORKSPACE_BASE/agent-alpha/` (whatever path you picked in 1.8), with
-Copilot CLI running. Detach with `Ctrl-b d` (you're back at the Mac
-shell). Reattach with `ca alpha` again — should be instant. Now the
-Mac side is done.
+Claude Code backend:
+
+```bash
+cc alpha        # tmux session `claude-alpha`, workspace `$CLAUDE_WORKSPACE_BASE/agent-alpha/`
+```
+
+You should land inside the matching `tmux` session with the backend
+CLI running. Detach with `Ctrl-b d` (you're back at the Mac shell).
+Reattach with the same command again — should be instant. Now the Mac
+side is done.
 
 ### 1.10 — Optional: install Open Markdown
 
@@ -526,31 +557,39 @@ installer writes for you (see [§1.8](#18--workspace-location)). The
 file looks roughly like:
 
 ```sh
-WORKSPACE_BASE="/Users/you/copilot-workspace"   # set during install
-MAILBOX_INTEGRATION="false"                     # off by default
-ALLOW_ALL="false"                               # off by default
+COPILOT_WORKSPACE_BASE="/Users/you/.../Dropbox/copilot-workspace"  # set during install
+CLAUDE_WORKSPACE_BASE="/Users/you/.../Dropbox/claude-workspace"    # set during install
+MAILBOX_INTEGRATION="false"                                        # off by default
+ALLOW_ALL="false"                                                  # off by default
 # COPILOT_BIN="copilot"
+# CLAUDE_BIN="claude"
 # AGENT_DIR_PREFIX="agent-"
 ```
 
-`WORKSPACE_BASE` is whatever you picked at install time (the installer
-auto-defaults to the Dropbox path if Dropbox is installed, otherwise
-`$HOME/copilot-workspace`). Re-run `./install.sh --workspace-base
-PATH` or edit the file directly to move it.
+`COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` are whatever you
+picked at install time (Dropbox defaults if Dropbox is installed,
+otherwise `$HOME/copilot-workspace` and `$HOME/claude-workspace`).
+Inside each root, agents live in `agent-<name>/` subdirs (change the
+prefix with `AGENT_DIR_PREFIX` if you want a different convention).
+Re-run `./install.sh` with `--copilot-workspace-base PATH` /
+`--claude-workspace-base PATH` or edit the file directly to move a
+root.
 
 `MAILBOX_INTEGRATION` enables the cross-session
 [mailbox](https://github.com/dfrysinger/skills) skill — `ca` pokes the
 recipient's pane on attach + cold-start when pending mail exists. Off
 unless you have the skill installed.
 
-`ALLOW_ALL` makes `ca` pass `--allow-all` to copilot on new-session
-launch (auto-approves all tools, paths, and URLs). Personal-machine
+`ALLOW_ALL` makes the wrapper skip permission prompts on new-session
+launch — Copilot: `--allow-all` (auto-approves tools, paths, URLs);
+Claude Code: `--dangerously-skip-permissions`. Personal-machine
 convenience; do not enable in shared environments.
 
-To use a different agent backend (Claude Code, Codex CLI), point
-`COPILOT_BIN` at its launcher and adjust the session-id flags inside
-`bin/copilot-agent`. First-class support for those backends is on the
-roadmap — see [Status](#status--roadmap).
+`COPILOT_BIN` / `CLAUDE_BIN` let you point the wrapper at a specific
+backend binary (e.g., `/opt/homebrew/bin/copilot` or a nightly build).
+
+Additional agent backends (Codex CLI, etc.) are on the roadmap — see
+[Status](#status--roadmap).
 
 ### tmux keychain bootstrap LaunchAgent
 
@@ -611,9 +650,10 @@ place — see the uninstaller output for the manual cleanup commands.
 ## Status & roadmap
 
 Single-machine, single-user, macOS arm64. Tested on macOS Tahoe.
-Linux support and first-class Claude Code / Codex CLI backends are
-[open issues](https://github.com/dfrysinger/remote-agent-stack/issues)
-— patches welcome.
+Copilot CLI and Claude Code CLI are both first-class backends today.
+Linux support and a Codex CLI backend are [open
+issues](https://github.com/dfrysinger/remote-agent-stack/issues) —
+patches welcome.
 
 ## Other docs
 
