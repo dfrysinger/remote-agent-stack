@@ -22,32 +22,38 @@ set -euo pipefail
 
 # ---- args ------------------------------------------------------------------
 
-WORKSPACE_BASE_ARG=""
+COPILOT_WORKSPACE_BASE_ARG=""
+CLAUDE_WORKSPACE_BASE_ARG=""
 
 usage() {
   cat <<USAGE
 Usage: $(basename "$0") [options]
 
 Options:
-  --workspace-base PATH   Where agent workspaces live (parent dir for
-                          agent-<name>/ subdirs). If omitted, the
-                          installer auto-detects Dropbox and prompts
-                          interactively with a smart default.
-  -h, --help              Show this help and exit.
+  --copilot-workspace-base PATH  Where copilot agent workspaces live
+                                 (parent dir for <name>/ subdirs).
+  --claude-workspace-base  PATH  Where claude  agent workspaces live
+                                 (parent dir for <name>/ subdirs).
+
+  If either flag is omitted, the installer auto-detects Dropbox and
+  prompts interactively with smart defaults.
+
+  -h, --help                     Show this help and exit.
 USAGE
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --workspace-base)
-      [ $# -ge 2 ] || { echo "--workspace-base requires a path" >&2; exit 2; }
-      WORKSPACE_BASE_ARG="$2"
-      shift 2
-      ;;
-    --workspace-base=*)
-      WORKSPACE_BASE_ARG="${1#*=}"
-      shift
-      ;;
+    --copilot-workspace-base)
+      [ $# -ge 2 ] || { echo "--copilot-workspace-base requires a path" >&2; exit 2; }
+      COPILOT_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
+    --copilot-workspace-base=*)
+      COPILOT_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
+    --claude-workspace-base)
+      [ $# -ge 2 ] || { echo "--claude-workspace-base requires a path" >&2; exit 2; }
+      CLAUDE_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
+    --claude-workspace-base=*)
+      CLAUDE_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -59,7 +65,7 @@ while [ $# -gt 0 ]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-WRAPPER_SRC="$REPO_ROOT/bin/copilot-agent"
+WRAPPER_SRC="$REPO_ROOT/bin/agent"
 WRAPPER_DST="/usr/local/bin/copilot-agent"
 WRAPPER_SHORT_DST="/usr/local/bin/ca"
 CLAUDE_WRAPPER_DST="/usr/local/bin/claude-agent"
@@ -299,63 +305,79 @@ else
   ok "nothing to do (system already configured)"
 fi
 
-# ---- workspace base + config file (no sudo) -------------------------------
+# ---- workspace bases + config file (no sudo) ------------------------------
+#
+# Each backend has its own workspace root. Inside each root, agents live as
+# plain subdirs named after themselves (no per-backend prefix):
+#   copilot: $COPILOT_WORKSPACE_BASE/<name>
+#   claude : $CLAUDE_WORKSPACE_BASE/<name>
 
-bold "Workspace base"
+bold "Workspace bases"
 
-# Read existing WORKSPACE_BASE from the config file (if any) so re-runs
-# don't pester the user.
-EXISTING_WORKSPACE_BASE=""
-if [ -f "$CONFIG_DIR/config" ]; then
-  EXISTING_WORKSPACE_BASE="$(
-    awk -F'=' '/^[[:space:]]*WORKSPACE_BASE=/{
-      sub(/^[[:space:]]*WORKSPACE_BASE=/, "", $0)
-      gsub(/^"|"$/, "", $0)
-      print
-      exit
-    }' "$CONFIG_DIR/config" 2>/dev/null || true
-  )"
-fi
+# Read existing values from the config file (if any) so re-runs don't pester.
+_read_config_var() {
+  local var="$1"
+  [ -f "$CONFIG_DIR/config" ] || return 0
+  awk -v v="$var" -F'=' '$1 ~ "^[[:space:]]*" v "$" {
+    sub("^[[:space:]]*" v "=", "", $0)
+    gsub(/^"|"$/, "", $0)
+    print
+    exit
+  }' "$CONFIG_DIR/config" 2>/dev/null || true
+}
 
-DROPBOX_DEFAULT="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
-PLAIN_DEFAULT="$HOME/copilot-workspace"
+EXISTING_COPILOT_WORKSPACE_BASE="$(_read_config_var COPILOT_WORKSPACE_BASE)"
+EXISTING_CLAUDE_WORKSPACE_BASE="$(_read_config_var CLAUDE_WORKSPACE_BASE)"
 
 if [ -d "$HOME/Library/CloudStorage/Dropbox" ]; then
-  SMART_DEFAULT="$DROPBOX_DEFAULT"
-  DEFAULT_REASON="Dropbox detected — workspaces will sync across Macs"
+  COPILOT_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
+  CLAUDE_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/claude-workspace"
+  SMART_DEFAULT_REASON="Dropbox detected — workspaces will sync across Macs"
 else
-  SMART_DEFAULT="$PLAIN_DEFAULT"
-  DEFAULT_REASON="no Dropbox found"
+  COPILOT_SMART_DEFAULT="$HOME/copilot-workspace"
+  CLAUDE_SMART_DEFAULT="$HOME/claude-workspace"
+  SMART_DEFAULT_REASON="no Dropbox found"
 fi
 
-WORKSPACE_BASE_RESOLVED=""
-
-if [ -n "$WORKSPACE_BASE_ARG" ]; then
-  WORKSPACE_BASE_RESOLVED="$WORKSPACE_BASE_ARG"
-  ok "using --workspace-base: $WORKSPACE_BASE_RESOLVED"
-elif [ -n "$EXISTING_WORKSPACE_BASE" ]; then
-  WORKSPACE_BASE_RESOLVED="$EXISTING_WORKSPACE_BASE"
-  ok "keeping existing config: $WORKSPACE_BASE_RESOLVED"
-elif [ -t 0 ] && [ -t 1 ]; then
-  # Interactive: prompt with the smart default.
-  echo "    Where should agent workspaces live? (parent dir for agent-<name>/)"
-  echo "    Default: $SMART_DEFAULT"
-  echo "             ($DEFAULT_REASON)"
-  printf "    Path [%s]: " "$SMART_DEFAULT"
-  read -r WORKSPACE_BASE_INPUT || WORKSPACE_BASE_INPUT=""
-  if [ -z "$WORKSPACE_BASE_INPUT" ]; then
-    WORKSPACE_BASE_RESOLVED="$SMART_DEFAULT"
+# Resolve one workspace base. Sets the global $RESOLVED_WS as the result;
+# all status output goes to stdout (kept out of a capture path).
+# Args: <backend-label> <arg-value> <existing-value> <smart-default>
+_resolve_workspace_base() {
+  local label="$1" arg="$2" existing="$3" default="$4"
+  RESOLVED_WS=""
+  if [ -n "$arg" ]; then
+    RESOLVED_WS="$arg"
+    ok "using --${label}-workspace-base: $RESOLVED_WS"
+  elif [ -n "$existing" ]; then
+    RESOLVED_WS="$existing"
+    ok "keeping existing $label config: $RESOLVED_WS"
+  elif [ -t 0 ] && [ -t 1 ]; then
+    echo "    Where should $label agent workspaces live? (parent dir for <name>/)"
+    echo "    Default: $default"
+    echo "             ($SMART_DEFAULT_REASON)"
+    printf "    Path [%s]: " "$default"
+    local input=""
+    read -r input || input=""
+    if [ -z "$input" ]; then
+      RESOLVED_WS="$default"
+    else
+      RESOLVED_WS="$(eval echo "$input")"
+    fi
+    ok "$label workspace base: $RESOLVED_WS"
   else
-    # Expand a leading ~ and any $VARS.
-    WORKSPACE_BASE_RESOLVED="$(eval echo "$WORKSPACE_BASE_INPUT")"
+    RESOLVED_WS="$default"
+    warn "non-interactive shell — using $RESOLVED_WS for $label ($SMART_DEFAULT_REASON)"
+    todo "override later with: $0 --${label}-workspace-base PATH"
   fi
-  ok "workspace base: $WORKSPACE_BASE_RESOLVED"
-else
-  # Non-interactive (e.g., piped install) and no flag: take the smart default.
-  WORKSPACE_BASE_RESOLVED="$SMART_DEFAULT"
-  warn "non-interactive shell — using $WORKSPACE_BASE_RESOLVED ($DEFAULT_REASON)"
-  todo "override later with: $0 --workspace-base PATH"
-fi
+}
+
+_resolve_workspace_base copilot "$COPILOT_WORKSPACE_BASE_ARG" \
+  "$EXISTING_COPILOT_WORKSPACE_BASE" "$COPILOT_SMART_DEFAULT"
+COPILOT_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
+
+_resolve_workspace_base claude "$CLAUDE_WORKSPACE_BASE_ARG" \
+  "$EXISTING_CLAUDE_WORKSPACE_BASE" "$CLAUDE_SMART_DEFAULT"
+CLAUDE_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
 
 # ---- mailbox integration prompt -------------------------------------------
 #
@@ -470,32 +492,22 @@ cat > "$CONFIG_DIR/config" <<EOF
 # remote-agent-stack — agent wrapper config
 # Re-generated by install.sh; safe to edit by hand.
 #
-# One wrapper serves two backends, chosen by the invocation name:
-#   copilot-agent / ca  -> Copilot CLI       (workspace: agent-<Name>)
-#   claude-agent  / cc  -> Claude Code CLI   (workspace: claude-<Name>)
+# One wrapper (bin/agent) serves two backends, chosen by invocation name:
+#   copilot-agent / ca  -> Copilot CLI      (workspace: \$COPILOT_WORKSPACE_BASE/<Name>)
+#   claude-agent  / cc  -> Claude Code CLI  (workspace: \$CLAUDE_WORKSPACE_BASE/<Name>)
 
-# WORKSPACE_BASE: where agent working directories live.
-#   copilot backend: \$WORKSPACE_BASE/agent-<Name>
-#   claude  backend: \$WORKSPACE_BASE/claude-<Name>
-WORKSPACE_BASE="$WORKSPACE_BASE_RESOLVED"
+# Where each backend's agent working directories live.
+COPILOT_WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE_RESOLVED"
+CLAUDE_WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE_RESOLVED"
 
-# COPILOT_BIN: name of the Copilot CLI binary (must be in PATH).
+# Backend CLI binaries (must be in PATH). Uncomment to override.
 # COPILOT_BIN="copilot"
-
-# COPILOT_DIR_PREFIX: prefix for copilot-backend per-agent directory names.
-# (Alias: AGENT_DIR_PREFIX, kept for backward compatibility.)
-# COPILOT_DIR_PREFIX="agent-"
-
-# CLAUDE_BIN: name of the Claude Code CLI binary (must be in PATH).
 # CLAUDE_BIN="claude"
-
-# CLAUDE_DIR_PREFIX: prefix for claude-backend per-agent directory names.
-# CLAUDE_DIR_PREFIX="claude-"
 
 # MAILBOX_INTEGRATION: enable cross-session message/file handoff via the
 # optional dfrysinger-skills \`mailbox\` skill. When "true", the wrapper
 # pokes the recipient's tmux pane on attach + new-session if pending mail
-# exists. When unset or "false", the mailbox hook is skipped entirely.
+# exists.
 MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
 
 # ALLOW_ALL: when "true", the wrapper skips permission prompts on
@@ -755,11 +767,11 @@ cat <<MANUAL
      login flow.
 
   4. Test:
-       ca alpha        # copilot backend  (long form: copilot-agent alpha)
-       cc alpha        # claude  backend  (long form: claude-agent  alpha)
+       ca alpha    # copilot backend, cwd \$COPILOT_WORKSPACE_BASE/alpha
+       cc alpha    # claude  backend, cwd \$CLAUDE_WORKSPACE_BASE/alpha
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
-       ca alpha        # or: cc alpha
+       ca alpha    # or: cc alpha
        ca bravo
        ...
 

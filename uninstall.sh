@@ -17,7 +17,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-WRAPPER_SRC="$REPO_ROOT/bin/copilot-agent"
+WRAPPER_SRC="$REPO_ROOT/bin/agent"
 
 PURGE=false
 for arg in "$@"; do

@@ -36,18 +36,19 @@ section you need from the table of contents.
 
 ## What you get
 
-- A single multi-call wrapper installed under four names — `ca` /
-  `copilot-agent` for the Copilot backend, `cc` / `claude-agent` for
-  the Claude Code backend — that launches or reattaches to a named
-  agent session. Keychain unlock, `tmux` session management, and
-  best-effort resumption of the previous CLI session for that name
-  (Copilot: stable UUID via `--session-id`; Claude: `--continue` when
-  the workspace has an existing session) are all handled.
+- A single multi-call wrapper (`bin/agent`) installed under four names
+  — `ca` / `copilot-agent` for the Copilot backend, `cc` /
+  `claude-agent` for the Claude Code backend — that launches or
+  reattaches to a named agent session. Keychain unlock, `tmux` session
+  management, and best-effort resumption of the previous CLI session
+  for that name (Copilot: stable UUID via `--session-id`; Claude:
+  `--continue` when the workspace has an existing session) are all
+  handled.
 
-  The two backends live in separate namespaces so they never collide:
-  `ca alpha` uses workspace `agent-alpha` and tmux session `alpha`;
-  `cc alpha` uses workspace `claude-alpha` and tmux session
-  `claude-alpha`.
+  Each backend has its own workspace root and its own tmux session
+  namespace, so the two never collide:
+    - `ca alpha` → workspace `$COPILOT_WORKSPACE_BASE/alpha`, tmux `alpha`
+    - `cc alpha` → workspace `$CLAUDE_WORKSPACE_BASE/alpha`,  tmux `claude-alpha`
 - A one-shot installer for OS-level prerequisites: Homebrew, `tmux`,
   Tailscale (CLI build), and the MagicDNS resolver fix that Homebrew's
   Tailscale formula leaves out.
@@ -142,7 +143,9 @@ The installer is idempotent — safe to re-run. It:
 
 - Installs Homebrew (if missing), `tmux`, and the Tailscale CLI build.
 - Writes `/etc/resolver/ts.net` (the MagicDNS resolver fix).
-- Symlinks `bin/copilot-agent` and `bin/ca` into `/usr/local/bin`.
+- Symlinks four names into `/usr/local/bin` — `copilot-agent`,
+  `ca`, `claude-agent`, `cc` — all pointing at the same multi-call
+  wrapper (`bin/agent`).
 - Stamps a managed block into `~/.tmux.conf` that hides tmux's status
   bar (the agents are full-screen TUIs and your Termius tabs already
   label each session). Toggle it back per-session with `prefix + b`.
@@ -245,45 +248,49 @@ Install whichever backend CLI(s) you plan to use:
 You can install one, the other, or both. The wrapper enforces the
 presence of the backend binary in PATH only at launch time.
 
-### 1.8 — Workspace location
+### 1.8 — Workspace locations
 
-The installer asks where agent workspaces should live (one directory
-per agent — e.g., `agent-alpha/`, `agent-bravo/` — under a parent base
-directory). It auto-picks a smart default and lets you override:
+Each backend has its own root directory; inside each, agents are plain
+subdirs named after the agent (`alpha/`, `bravo/`, …). The installer
+asks for both and auto-picks smart defaults:
 
-- **If you have Dropbox installed**, the default is
-  `~/Library/CloudStorage/Dropbox/copilot-workspace` — workspaces sync
-  across all your Macs out of the box.
-- **If you don't have Dropbox**, the default is
-  `~/copilot-workspace`.
+- **With Dropbox installed** (recommended — workspaces sync across
+  Macs):
+  - Copilot: `~/Library/CloudStorage/Dropbox/copilot-workspace`
+  - Claude:  `~/Library/CloudStorage/Dropbox/claude-workspace`
+- **Without Dropbox**:
+  - Copilot: `~/copilot-workspace`
+  - Claude:  `~/claude-workspace`
 
-Press Enter to accept the default, or type any path you like (`~`,
-`$HOME`, and shell expansions all work). Re-running `install.sh` later
-keeps your existing choice and skips the prompt.
+Press Enter to accept a default, or type any path (`~`, `$HOME`, and
+shell expansions all work). Re-running `install.sh` later keeps
+existing choices and skips the prompts.
 
-To pick a path non-interactively (or from a script):
+To pick paths non-interactively (or from a script):
 
 ```bash
-./install.sh --workspace-base ~/code/copilot-workspace
+./install.sh \
+  --copilot-workspace-base ~/code/copilot-workspace \
+  --claude-workspace-base  ~/code/claude-workspace
 ```
 
-This writes `WORKSPACE_BASE="…"` into
+This writes `COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` into
 `~/.config/remote-agent-stack/config`. Edit that file directly any
-time to move the workspace base later (you'll have to move existing
-`agent-<name>/` directories by hand).
+time to move a workspace base later (you'll have to move existing
+`<name>/` directories under it by hand).
 
 ### 1.9 — Test the wrapper locally
 
 Copilot backend:
 
 ```bash
-ca alpha        # tmux session `alpha`, workspace `$WORKSPACE_BASE/agent-alpha/`
+ca alpha        # tmux session `alpha`, workspace `$COPILOT_WORKSPACE_BASE/alpha/`
 ```
 
 Claude Code backend:
 
 ```bash
-cc alpha        # tmux session `claude-alpha`, workspace `$WORKSPACE_BASE/claude-alpha/`
+cc alpha        # tmux session `claude-alpha`, workspace `$CLAUDE_WORKSPACE_BASE/alpha/`
 ```
 
 You should land inside the matching `tmux` session with the backend
@@ -550,19 +557,20 @@ installer writes for you (see [§1.8](#18--workspace-location)). The
 file looks roughly like:
 
 ```sh
-WORKSPACE_BASE="/Users/you/copilot-workspace"   # set during install
-MAILBOX_INTEGRATION="false"                     # off by default
-ALLOW_ALL="false"                               # off by default
+COPILOT_WORKSPACE_BASE="/Users/you/.../Dropbox/copilot-workspace"  # set during install
+CLAUDE_WORKSPACE_BASE="/Users/you/.../Dropbox/claude-workspace"    # set during install
+MAILBOX_INTEGRATION="false"                                        # off by default
+ALLOW_ALL="false"                                                  # off by default
 # COPILOT_BIN="copilot"
-# COPILOT_DIR_PREFIX="agent-"      # (alias: AGENT_DIR_PREFIX)
 # CLAUDE_BIN="claude"
-# CLAUDE_DIR_PREFIX="claude-"
 ```
 
-`WORKSPACE_BASE` is whatever you picked at install time (the installer
-auto-defaults to the Dropbox path if Dropbox is installed, otherwise
-`$HOME/copilot-workspace`). Re-run `./install.sh --workspace-base
-PATH` or edit the file directly to move it.
+`COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` are whatever you
+picked at install time (Dropbox defaults if Dropbox is installed,
+otherwise `$HOME/copilot-workspace` and `$HOME/claude-workspace`).
+Re-run `./install.sh` with `--copilot-workspace-base PATH` /
+`--claude-workspace-base PATH` or edit the file directly to move a
+root.
 
 `MAILBOX_INTEGRATION` enables the cross-session
 [mailbox](https://github.com/dfrysinger/skills) skill — `ca` pokes the
@@ -576,10 +584,6 @@ convenience; do not enable in shared environments.
 
 `COPILOT_BIN` / `CLAUDE_BIN` let you point the wrapper at a specific
 backend binary (e.g., `/opt/homebrew/bin/copilot` or a nightly build).
-`COPILOT_DIR_PREFIX` and `CLAUDE_DIR_PREFIX` control the per-backend
-workspace directory prefix; the default separation (`agent-` vs
-`claude-`) is what keeps the two namespaces from colliding, so change
-these only if you have a very specific reason.
 
 Additional agent backends (Codex CLI, etc.) are on the roadmap — see
 [Status](#status--roadmap).

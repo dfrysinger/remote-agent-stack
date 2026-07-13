@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# copilot-agent / claude-agent — launch or attach to a named agent session
+# agent — launch or attach to a named agent session (Copilot or Claude Code)
 #
 # This is a multi-call script: the backend (Copilot CLI vs Claude Code CLI)
-# is chosen by the name it's invoked as. Symlink or hardlink this file to:
+# is chosen by the name it's invoked as. install.sh symlinks four names in
+# /usr/local/bin:
 #   copilot-agent  (or ca)  → Copilot CLI backend
 #   claude-agent   (or cc)  → Claude Code CLI backend
 #
@@ -10,30 +11,23 @@
 #   copilot-agent <name>      (or: ca <name>)
 #   claude-agent  <name>      (or: cc <name>)
 #
-# Behavior (per backend):
-#   - Resolves <name> to a workspace directory under $WORKSPACE_BASE, using
-#     a backend-specific prefix so the two backends never collide:
-#       copilot: $WORKSPACE_BASE/agent-<name>
-#       claude : $WORKSPACE_BASE/claude-<name>
-#     (case-preserved; case-sensitive throughout.)
-#   - Uses a backend-specific tmux session name:
-#       copilot: <name>            (unchanged for backward compat)
-#       claude : claude-<name>
-#   - If the tmux session exists, attaches to it.
-#   - Otherwise unlocks the login keychain, creates a new tmux session, and
-#     launches the backend CLI, resuming an existing session of the same
-#     identity where possible (falling back to a fresh session).
+# Layout: each backend has its own workspace root, subdirs named after the
+# agent — no prefix noise:
+#   copilot: $COPILOT_WORKSPACE_BASE/<name>   (tmux session: <name>)
+#   claude : $CLAUDE_WORKSPACE_BASE/<name>    (tmux session: claude-<name>)
 #
-# Configuration (override via env or ~/.config/remote-agent-stack/config):
-#   WORKSPACE_BASE      default: $HOME/Library/CloudStorage/Dropbox/copilot-workspace
-#   COPILOT_BIN         default: copilot
-#   COPILOT_DIR_PREFIX  default: agent-       (alias: AGENT_DIR_PREFIX)
-#   CLAUDE_BIN          default: claude
-#   CLAUDE_DIR_PREFIX   default: claude-
-#   ALLOW_ALL           default: false        (copilot: --allow-all; claude: --dangerously-skip-permissions)
-#   MAILBOX_INTEGRATION default: false
+# The claude tmux session name is prefixed only so `ca alpha` and `cc alpha`
+# can coexist on the same tmux server without collision.
 #
-# A sample config file is created on first install.
+# Configuration (env or ~/.config/remote-agent-stack/config):
+#   COPILOT_WORKSPACE_BASE   default: ~/Library/CloudStorage/Dropbox/copilot-workspace
+#   CLAUDE_WORKSPACE_BASE    default: ~/Library/CloudStorage/Dropbox/claude-workspace
+#   COPILOT_BIN              default: copilot
+#   CLAUDE_BIN               default: claude
+#   ALLOW_ALL                default: false
+#     copilot: --allow-all
+#     claude : --dangerously-skip-permissions
+#   MAILBOX_INTEGRATION      default: false
 
 set -euo pipefail
 
@@ -42,7 +36,8 @@ set -euo pipefail
 case "$(basename "$0")" in
   ca|copilot-agent) BACKEND="copilot" ;;
   cc|claude-agent)  BACKEND="claude" ;;
-  *)                BACKEND="copilot" ;;  # default for direct invocation
+  agent)            BACKEND="copilot" ;;  # fallback for direct invocation
+  *)                BACKEND="copilot" ;;
 esac
 
 # ---- config ----------------------------------------------------------------
@@ -55,23 +50,20 @@ if [ -f "$CONFIG_FILE" ]; then
   . "$CONFIG_FILE"
 fi
 
-: "${WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/copilot-workspace}"
+: "${COPILOT_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/copilot-workspace}"
+: "${CLAUDE_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/claude-workspace}"
 : "${COPILOT_BIN:=copilot}"
-# AGENT_DIR_PREFIX is the pre-multi-call name; keep it as an alias so
-# existing configs keep working.
-: "${COPILOT_DIR_PREFIX:=${AGENT_DIR_PREFIX:-agent-}}"
 : "${CLAUDE_BIN:=claude}"
-: "${CLAUDE_DIR_PREFIX:=claude-}"
 
 case "$BACKEND" in
   copilot)
     AGENT_BIN="$COPILOT_BIN"
-    DIR_PREFIX="$COPILOT_DIR_PREFIX"
+    WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE"
     SESSION_PREFIX=""
     ;;
   claude)
     AGENT_BIN="$CLAUDE_BIN"
-    DIR_PREFIX="$CLAUDE_DIR_PREFIX"
+    WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE"
     SESSION_PREFIX="claude-"
     ;;
 esac
@@ -92,8 +84,8 @@ Options:
 
 Config:
   ~/.config/remote-agent-stack/config
-  Env: WORKSPACE_BASE, COPILOT_BIN, COPILOT_DIR_PREFIX,
-       CLAUDE_BIN, CLAUDE_DIR_PREFIX, ALLOW_ALL, MAILBOX_INTEGRATION
+  Env: COPILOT_WORKSPACE_BASE, CLAUDE_WORKSPACE_BASE,
+       COPILOT_BIN, CLAUDE_BIN, ALLOW_ALL, MAILBOX_INTEGRATION
 USAGE
 }
 
@@ -107,14 +99,15 @@ if [ $# -ne 1 ] || [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
 fi
 
 NAME="$1"
-DIR="$WORKSPACE_BASE/${DIR_PREFIX}${NAME}"
+DIR="$WORKSPACE_BASE/$NAME"
 SESSION="${SESSION_PREFIX}${NAME}"
 
 # ---- preflight -------------------------------------------------------------
 
 if [ ! -d "$WORKSPACE_BASE" ]; then
-  echo "Workspace base not available: $WORKSPACE_BASE" >&2
-  echo "Set WORKSPACE_BASE in $CONFIG_FILE or via env." >&2
+  BACKEND_UPPER="$(printf '%s' "$BACKEND" | tr a-z A-Z)"
+  echo "$BACKEND workspace base not available: $WORKSPACE_BASE" >&2
+  echo "Set ${BACKEND_UPPER}_WORKSPACE_BASE in $CONFIG_FILE or via env." >&2
   exit 1
 fi
 
@@ -174,9 +167,9 @@ case "$BACKEND" in
     # UUID resolution, in priority order:
     #   1. Scan ~/.copilot/session-state/*/workspace.yaml for an existing
     #      session whose `cwd:` equals $DIR (the wrapper's canonical
-    #      agent-<NAME> workspace). Prefer sessions with summary_count > 0
-    #      (i.e., real work has happened) over empty placeholder sessions;
-    #      within each tier, pick the one with the most recent updated_at.
+    #      workspace). Prefer sessions with summary_count > 0 (i.e., real
+    #      work has happened) over empty placeholder sessions; within each
+    #      tier, pick the one with the most recent updated_at.
     #
     #      We key on cwd, NOT on the `name:` field: Copilot CLI's
     #      auto-summarizer rewrites `name:` in place whenever
@@ -186,15 +179,15 @@ case "$BACKEND" in
     #      and leave us starting a brand-new empty session instead of
     #      resuming the real one.
     #
-    #      Within each tier (real and empty), latest `updated_at` wins
-    #      — i.e., the session most recently active. `updated_at` is
-    #      bumped by real activity inside Copilot CLI (user messages,
-    #      tool calls, summarizer runs), not by `tmux attach` (which
-    #      only reconnects the terminal without restarting the running
-    #      copilot process). So `updated_at` reliably identifies the
-    #      session the user was last working in, which is what `ca`
-    #      should resume — including across `/new` (the new session
-    #      promotes itself by being the one with fresh activity).
+    #      Within each tier (real and empty), latest `updated_at` wins —
+    #      i.e., the session most recently active. `updated_at` is bumped
+    #      by real activity inside Copilot CLI (user messages, tool calls,
+    #      summarizer runs), not by `tmux attach` (which only reconnects
+    #      the terminal without restarting the running copilot process).
+    #      So `updated_at` reliably identifies the session the user was
+    #      last working in, which is what `ca` should resume — including
+    #      across `/new` (the new session promotes itself by being the
+    #      one with fresh activity).
     #
     #   2. Otherwise, fall back to a deterministic UUIDv5 derived from the
     #      name, so the first wrapper launch creates a stable UUID and
