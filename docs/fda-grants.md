@@ -21,8 +21,9 @@ fail.
 
 Once you SSH in over Tailscale and exec into a tmux session, every
 process running inside that tmux inherits tmux's sandbox profile. If tmux
-itself doesn't have FDA, then `git`, `gh`, Copilot CLI, etc. will all be
-quietly blocked from reading files in protected locations (Desktop,
+itself doesn't have FDA, then `git`, `gh`, Copilot CLI, Claude Code
+CLI, etc. will all be quietly blocked from reading files in protected
+locations (Desktop,
 Documents, Downloads, iCloud Drive, Dropbox under
 `~/Library/CloudStorage/`).
 
