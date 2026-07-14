@@ -124,12 +124,14 @@ and fails inside `tmux new-session`.
 ### tmux session disappears after Mac reboots
 
 tmux sessions are in-memory; they don't survive reboots. The wrapper
-calls `copilot --resume=<Name>` on next launch, which restores the
-Copilot CLI conversation, but tmux history (scrollback) is gone.
+resumes the backend CLI's session on next launch — Copilot via a
+stable `--session-id=<uuid>`; Claude Code via `claude --continue` when
+the workspace has an existing session under `~/.claude/projects/`.
+Either way the conversation comes back; tmux scrollback is gone.
 
-## Copilot CLI
+## Backend CLIs
 
-### Asks "store token in plain text config file?" on every launch
+### Copilot: "store token in plain text config file?" on every launch
 
 Answer "Yes". Reasoning: the Copilot CLI defaults to the macOS keychain,
 which is unreliable over SSH — the keychain prompts the GUI for unlock,
@@ -138,20 +140,29 @@ plaintext fallback lives at `~/.copilot/config.json` with mode 0600,
 inside the FileVault-encrypted home volume. The risk delta over the
 keychain is small; the operational benefit is large.
 
-### `copilot --remote` exits immediately with no UI
+### Claude Code: authentication on first launch inside tmux
 
-`--remote` is correct (we tried `--remote on` first; that's a different
-mode). The most common cause is the binary not being on PATH inside
-tmux. Sanity check from inside an active tmux session:
+The first `cc <name>` opens Claude Code's in-terminal login flow. Follow
+the prompts to sign in; the token lands under `~/.claude/` and
+subsequent launches reuse it. If auth silently fails, the most common
+cause is the same PATH issue as Copilot below — `claude` isn't on the
+non-login shell's PATH.
+
+### Backend binary exits immediately with no UI (`copilot --remote` or `claude`)
+
+For Copilot, `--remote` is correct (we tried `--remote on` first;
+that's a different mode). The most common cause for either backend is
+the binary not being on PATH inside tmux. Sanity check from inside an
+active tmux session:
 
 ```bash
-which copilot
+which copilot   # or: which claude
 echo "$PATH"
 ```
 
-If `which copilot` is empty, either install Copilot CLI to a standard
-PATH location or add its install dir to `~/.zshenv` so non-login shells
-see it. `~/.zshrc` is *not* enough — tmux launches non-login,
+If empty, either install the backend CLI to a standard PATH location
+or add its install dir to `~/.zshenv` so non-login shells see it.
+`~/.zshrc` is *not* enough — tmux launches non-login,
 non-interactive shells for `send-keys`.
 
 ## Keychain
@@ -191,9 +202,10 @@ into pasted content. Symptom is commands silently failing or only
 running the first line of a heredoc.
 
 This was the original motivation for replacing the multi-line shell
-snippet with the single-line `copilot-agent <Name>` wrapper. If you
-still need to paste something multi-line from your phone, put it in a
-text file (TextEdit, Dropbox-synced) and `cat` it on the Mac instead.
+snippet with the single-line wrapper (`ca <Name>` or `cc <Name>`). If
+you still need to paste something multi-line from your phone, put it
+in a text file (TextEdit, Dropbox-synced) and `cat` it on the Mac
+instead.
 
 ## Managed devices
 
