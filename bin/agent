@@ -234,7 +234,16 @@ case "$BACKEND" in
       UUID="$(python3 -c "import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, 'remote-agent-stack/'+sys.argv[1]))" "$NAME")"
     fi
 
-    CMD="$AGENT_BIN --session-id='$UUID' --name='$NAME' --remote"
+    # Launch by --session-id alone, which Copilot treats as "resume this
+    # session, or create it if the UUID is new" — so one command covers both
+    # the first launch and every resume. We deliberately do NOT pass --name:
+    # recent Copilot CLI rejects --name together with a --session-id that
+    # resolves to an existing or remote session (i.e. every resume, plus a
+    # cross-machine first launch that resolves to a remote session), and --name
+    # is only a cosmetic label on the session anyway. Resume never relies on it
+    # — the scan above keys on `cwd`, not `name`, precisely because Copilot's
+    # auto-summarizer rewrites session names in place.
+    CMD="$AGENT_BIN --session-id='$UUID' --remote"
     if [ "${ALLOW_ALL:-false}" = "true" ]; then
       CMD="$CMD --allow-all"
     fi
