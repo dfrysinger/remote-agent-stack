@@ -388,6 +388,12 @@ _read_config_var() {
 
 EXISTING_COPILOT_WORKSPACE_BASE="$(_read_config_var COPILOT_WORKSPACE_BASE)"
 EXISTING_CLAUDE_WORKSPACE_BASE="$(_read_config_var CLAUDE_WORKSPACE_BASE)"
+EXISTING_LEGACY_WORKSPACE_BASE="$(_read_config_var WORKSPACE_BASE)"
+
+if [ -z "$EXISTING_COPILOT_WORKSPACE_BASE" ] && [ -n "$EXISTING_LEGACY_WORKSPACE_BASE" ]; then
+  EXISTING_COPILOT_WORKSPACE_BASE="$EXISTING_LEGACY_WORKSPACE_BASE"
+  ok "migrating existing Copilot workspace config: $EXISTING_COPILOT_WORKSPACE_BASE"
+fi
 
 if [ -d "$HOME/Library/CloudStorage/Dropbox" ]; then
   COPILOT_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
@@ -545,7 +551,7 @@ bold "Configuration"
 
 mkdir -p "$CONFIG_DIR"
 
-# Always (re-)write the config so WORKSPACE_BASE matches what we just resolved.
+# Always (re-)write the config so both workspace bases match what we resolved.
 # COPILOT_BIN and AGENT_DIR_PREFIX stay as commented defaults — the wrapper
 # falls back to its own defaults if they're absent.
 cat > "$CONFIG_DIR/config" <<EOF

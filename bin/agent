@@ -52,6 +52,12 @@ if [ -f "$CONFIG_FILE" ]; then
   . "$CONFIG_FILE"
 fi
 
+# Pre-Claude installs used WORKSPACE_BASE for Copilot. Preserve that value so
+# upgrading the script does not silently switch existing agents to a new root.
+if [ -z "${COPILOT_WORKSPACE_BASE:-}" ] && [ -n "${WORKSPACE_BASE:-}" ]; then
+  COPILOT_WORKSPACE_BASE="$WORKSPACE_BASE"
+fi
+
 : "${COPILOT_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/copilot-workspace}"
 : "${CLAUDE_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/claude-workspace}"
 : "${COPILOT_BIN:=copilot}"
