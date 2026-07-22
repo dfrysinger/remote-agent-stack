@@ -4,6 +4,7 @@
 # Removes the userland artifacts installed by install.sh:
 #   - /usr/local/bin/copilot-agent + ca symlinks (copilot backend)
 #   - /usr/local/bin/claude-agent  + cc symlinks (claude  backend)
+#   - /usr/local/bin/codex-agent   + co symlinks (codex   backend)
 #   - /usr/local/bin/ss and /usr/local/bin/vncfix symlinks (GUI helpers)
 #   - /etc/resolver/ts.net
 #   - ~/.tmux.conf managed block (status-bar-off settings)
@@ -41,11 +42,12 @@ else
   skip "/usr/local/bin/copilot-agent not present"
 fi
 
-bold "Removing wrapper aliases (ca, claude-agent, cc)"
+bold "Removing wrapper aliases (ca, claude-agent, cc, codex-agent, co)"
 # Only remove links that point at THIS clone's wrapper (exact absolute
 # match). Anything else — a foreign tool's symlink, a hand-rolled alias, a
 # real file — is left alone.
-for _dst in /usr/local/bin/ca /usr/local/bin/claude-agent /usr/local/bin/cc; do
+for _dst in /usr/local/bin/ca /usr/local/bin/claude-agent /usr/local/bin/cc \
+            /usr/local/bin/codex-agent /usr/local/bin/co; do
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
     todo "sudo rm $_dst"
     sudo rm -f "$_dst"
@@ -133,5 +135,6 @@ echo "  • Homebrew packages:        brew uninstall tmux tailscale"
 echo "  • Tailscale daemon:         sudo brew services stop tailscale"
 echo "  • FDA grants:               System Settings → Privacy & Security → Full Disk Access"
 echo "  • Copilot CLI + ~/.copilot: per Copilot CLI docs"
+echo "  • Codex   CLI + ~/.codex:   per Codex CLI docs"
 echo "  • Tailscale network state:  sudo tailscale logout"
 [ "$PURGE" = "false" ] && echo "  • Wrapper config:           re-run with --purge"

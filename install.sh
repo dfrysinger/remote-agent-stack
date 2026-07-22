@@ -24,6 +24,7 @@ set -euo pipefail
 
 COPILOT_WORKSPACE_BASE_ARG=""
 CLAUDE_WORKSPACE_BASE_ARG=""
+CODEX_WORKSPACE_BASE_ARG=""
 
 usage() {
   cat <<USAGE
@@ -34,8 +35,10 @@ Options:
                                  (parent dir for agent-<name>/ subdirs).
   --claude-workspace-base  PATH  Where claude  agent workspaces live
                                  (parent dir for agent-<name>/ subdirs).
+  --codex-workspace-base   PATH  Where codex   agent workspaces live
+                                 (parent dir for agent-<name>/ subdirs).
 
-  If either flag is omitted, the installer auto-detects Dropbox and
+  If any flag is omitted, the installer auto-detects Dropbox and
   prompts interactively with smart defaults.
 
   -h, --help                     Show this help and exit.
@@ -54,6 +57,11 @@ while [ $# -gt 0 ]; do
       CLAUDE_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
     --claude-workspace-base=*)
       CLAUDE_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
+    --codex-workspace-base)
+      [ $# -ge 2 ] || { echo "--codex-workspace-base requires a path" >&2; exit 2; }
+      CODEX_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
+    --codex-workspace-base=*)
+      CODEX_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -70,6 +78,8 @@ WRAPPER_DST="/usr/local/bin/copilot-agent"
 WRAPPER_SHORT_DST="/usr/local/bin/ca"
 CLAUDE_WRAPPER_DST="/usr/local/bin/claude-agent"
 CLAUDE_WRAPPER_SHORT_DST="/usr/local/bin/cc"
+CODEX_WRAPPER_DST="/usr/local/bin/codex-agent"
+CODEX_WRAPPER_SHORT_DST="/usr/local/bin/co"
 SS_SRC="$REPO_ROOT/bin/ss"
 SS_DST="/usr/local/bin/ss"
 VNCFIX_SRC="$REPO_ROOT/bin/vncfix"
@@ -240,11 +250,12 @@ else
   NEED_SYMLINK=true
 fi
 
-# Same collision-avoidance for the claude-agent long name and the 'cc' short
-# alias. All four names ('copilot-agent', 'ca', 'claude-agent', 'cc') point at
-# the same multi-call wrapper — backend is chosen from $0's basename inside
-# the script.
-for _dst in "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST"; do
+# Same collision-avoidance for the claude/codex long names and their short
+# aliases. All six names ('copilot-agent', 'ca', 'claude-agent', 'cc',
+# 'codex-agent', 'co') point at the same multi-call wrapper — backend is
+# chosen from $0's basename inside the script.
+for _dst in "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST" \
+            "$CODEX_WRAPPER_DST" "$CODEX_WRAPPER_SHORT_DST"; do
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
     :  # already correct
   elif [ -e "$_dst" ]; then
@@ -282,6 +293,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   $NEED_USRLOCALBIN_MKDIR  && echo "    • create /usr/local/bin"
   $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST, $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
   $NEED_SYMLINK            && echo "    • symlink $CLAUDE_WRAPPER_DST, $CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC"
+  $NEED_SYMLINK            && echo "    • symlink $CODEX_WRAPPER_DST, $CODEX_WRAPPER_SHORT_DST -> $WRAPPER_SRC"
   $NEED_SYMLINK            && echo "    • symlink $SS_DST, $VNCFIX_DST -> bin/{ss,vncfix}"
   echo
   echo "  ============================================================"
@@ -302,12 +314,14 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   WRAPPER_SHORT_DST="$WRAPPER_SHORT_DST" \
   CLAUDE_WRAPPER_DST="$CLAUDE_WRAPPER_DST" \
   CLAUDE_WRAPPER_SHORT_DST="$CLAUDE_WRAPPER_SHORT_DST" \
+  CODEX_WRAPPER_DST="$CODEX_WRAPPER_DST" \
+  CODEX_WRAPPER_SHORT_DST="$CODEX_WRAPPER_SHORT_DST" \
   SS_SRC="$SS_SRC" \
   SS_DST="$SS_DST" \
   VNCFIX_SRC="$VNCFIX_SRC" \
   VNCFIX_DST="$VNCFIX_DST" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,CLAUDE_WRAPPER_DST,CLAUDE_WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,CLAUDE_WRAPPER_DST,CLAUDE_WRAPPER_SHORT_DST,CODEX_WRAPPER_DST,CODEX_WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -328,11 +342,13 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
       rm -f "$WRAPPER_DST"
       ln -s "$WRAPPER_SRC" "$WRAPPER_DST"
 
-      # Short 'ca' alias + claude-agent names: only create/replace if absent,
+      # Short 'ca' alias + claude/codex names: only create/replace if absent,
       # or already a symlink pointing at THIS wrapper. Leave any pre-existing
-      # real file OR foreign symlink alone (collision avoidance). All four
+      # real file OR foreign symlink alone (collision avoidance). All six
       # names point at the same multi-call wrapper.
-      for _alias_dst in "$WRAPPER_SHORT_DST" "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST"; do
+      for _alias_dst in "$WRAPPER_SHORT_DST" \
+                        "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST" \
+                        "$CODEX_WRAPPER_DST"  "$CODEX_WRAPPER_SHORT_DST"; do
         if [ ! -e "$_alias_dst" ] || { [ -L "$_alias_dst" ] && [ "$(readlink "$_alias_dst")" = "$WRAPPER_SRC" ]; }; then
           echo "  → symlinking $_alias_dst"
           rm -f "$_alias_dst"
@@ -359,6 +375,8 @@ PRIVILEGED_BLOCK
   $NEED_SYMLINK            && [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_SHORT_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && [ -L "$CODEX_WRAPPER_DST" ] && [ "$(readlink "$CODEX_WRAPPER_DST")" = "$WRAPPER_SRC" ] && ok "$CODEX_WRAPPER_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && [ -L "$CODEX_WRAPPER_SHORT_DST" ] && [ "$(readlink "$CODEX_WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$CODEX_WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$SS_DST" ] && [ "$(readlink "$SS_DST")" = "$SS_SRC" ] && ok "$SS_DST -> $SS_SRC" || true
   $NEED_SYMLINK            && [ -L "$VNCFIX_DST" ] && [ "$(readlink "$VNCFIX_DST")" = "$VNCFIX_SRC" ] && ok "$VNCFIX_DST -> $VNCFIX_SRC" || true
 else
@@ -388,6 +406,7 @@ _read_config_var() {
 
 EXISTING_COPILOT_WORKSPACE_BASE="$(_read_config_var COPILOT_WORKSPACE_BASE)"
 EXISTING_CLAUDE_WORKSPACE_BASE="$(_read_config_var CLAUDE_WORKSPACE_BASE)"
+EXISTING_CODEX_WORKSPACE_BASE="$(_read_config_var CODEX_WORKSPACE_BASE)"
 EXISTING_LEGACY_WORKSPACE_BASE="$(_read_config_var WORKSPACE_BASE)"
 
 if [ -z "$EXISTING_COPILOT_WORKSPACE_BASE" ] && [ -n "$EXISTING_LEGACY_WORKSPACE_BASE" ]; then
@@ -398,10 +417,12 @@ fi
 if [ -d "$HOME/Library/CloudStorage/Dropbox" ]; then
   COPILOT_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
   CLAUDE_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/claude-workspace"
+  CODEX_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/codex-workspace"
   SMART_DEFAULT_REASON="Dropbox detected — workspaces will sync across Macs"
 else
   COPILOT_SMART_DEFAULT="$HOME/copilot-workspace"
   CLAUDE_SMART_DEFAULT="$HOME/claude-workspace"
+  CODEX_SMART_DEFAULT="$HOME/codex-workspace"
   SMART_DEFAULT_REASON="no Dropbox found"
 fi
 
@@ -444,6 +465,10 @@ COPILOT_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
 _resolve_workspace_base claude "$CLAUDE_WORKSPACE_BASE_ARG" \
   "$EXISTING_CLAUDE_WORKSPACE_BASE" "$CLAUDE_SMART_DEFAULT"
 CLAUDE_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
+
+_resolve_workspace_base codex "$CODEX_WORKSPACE_BASE_ARG" \
+  "$EXISTING_CODEX_WORKSPACE_BASE" "$CODEX_SMART_DEFAULT"
+CODEX_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
 
 # ---- mailbox integration prompt -------------------------------------------
 #
@@ -551,24 +576,27 @@ bold "Configuration"
 
 mkdir -p "$CONFIG_DIR"
 
-# Always (re-)write the config so both workspace bases match what we resolved.
-# COPILOT_BIN and AGENT_DIR_PREFIX stay as commented defaults — the wrapper
+# Always (re-)write the config so every workspace base matches what we resolved.
+# The *_BIN and AGENT_DIR_PREFIX vars stay as commented defaults — the wrapper
 # falls back to its own defaults if they're absent.
 cat > "$CONFIG_DIR/config" <<EOF
 # remote-agent-stack — agent wrapper config
 # Re-generated by install.sh; safe to edit by hand.
 #
-# One wrapper (bin/agent) serves two backends, chosen by invocation name:
+# One wrapper (bin/agent) serves three backends, chosen by invocation name:
 #   copilot-agent / ca  -> Copilot CLI      (workspace: \$COPILOT_WORKSPACE_BASE/agent-<Name>)
 #   claude-agent  / cc  -> Claude Code CLI  (workspace: \$CLAUDE_WORKSPACE_BASE/agent-<Name>)
+#   codex-agent   / co  -> Codex CLI        (workspace: \$CODEX_WORKSPACE_BASE/agent-<Name>)
 
 # Where each backend's agent working directories live.
 COPILOT_WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE_RESOLVED"
 CLAUDE_WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE_RESOLVED"
+CODEX_WORKSPACE_BASE="$CODEX_WORKSPACE_BASE_RESOLVED"
 
 # Backend CLI binaries (must be in PATH). Uncomment to override.
 # COPILOT_BIN="copilot"
 # CLAUDE_BIN="claude"
+# CODEX_BIN="codex"
 
 # AGENT_DIR_PREFIX: prefix for per-agent working directories under each
 # backend's workspace root. Uncomment to override.
@@ -581,7 +609,10 @@ CLAUDE_WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE_RESOLVED"
 MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
 
 # ALLOW_ALL: when "true", the wrapper skips permission prompts on
-# new-session launch (copilot: --allow-all; claude: --dangerously-skip-permissions).
+# new-session launch:
+#   copilot: --allow-all
+#   claude : --dangerously-skip-permissions
+#   codex  : --dangerously-bypass-approvals-and-sandbox
 # Personal-machine convenience; do NOT enable in shared environments.
 ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 EOF
@@ -780,6 +811,13 @@ else
   echo "    Install per https://docs.claude.com/en/docs/claude-code/quickstart"
 fi
 
+if have codex; then
+  ok "codex CLI found ($(codex --version 2>&1 | head -1))"
+else
+  warn "codex CLI not found in PATH — 'co' / 'codex-agent' will error until installed."
+  echo "    Install per https://developers.openai.com/codex/cli/"
+fi
+
 # ---- manual steps ---------------------------------------------------------
 #
 # FDA paths must be the REAL binary (the Cellar path), not the symlink
@@ -836,12 +874,16 @@ cat <<MANUAL
      prompt for authentication in the terminal — follow the on-screen
      login flow.
 
+     First Codex CLI launch (if you use the codex backend) will prompt
+     you to \`codex login\` — follow the on-screen ChatGPT flow.
+
   4. Test:
        ca alpha    # copilot backend, cwd \$COPILOT_WORKSPACE_BASE/agent-alpha
        cc alpha    # claude  backend, cwd \$CLAUDE_WORKSPACE_BASE/agent-alpha
+       co alpha    # codex   backend, cwd \$CODEX_WORKSPACE_BASE/agent-alpha
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
-       ca alpha    # or: cc alpha
+       ca alpha    # or: cc alpha    # or: co alpha
        ca bravo
        ...
 
