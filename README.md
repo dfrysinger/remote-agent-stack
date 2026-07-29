@@ -579,6 +579,7 @@ ALLOW_ALL="false"                                                  # off by defa
 # COPILOT_BIN="copilot"
 # CLAUDE_BIN="claude"
 # AGENT_DIR_PREFIX="agent-"
+# SESSION_WARN_MB="300"
 ```
 
 `COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` are whatever you
@@ -599,6 +600,21 @@ unless you have the skill installed.
 launch — Copilot: `--allow-all` (auto-approves tools, paths, URLs);
 Claude Code: `--dangerously-skip-permissions`. Personal-machine
 convenience; do not enable in shared environments.
+
+`SESSION_WARN_MB` (Copilot only) is the size at which `ca` offers to
+retire an agent's session and start a fresh one. Copilot replays a
+session's whole event log on resume, so a session carried for weeks
+grows into the gigabytes and becomes slow to start. Accept the offer and
+`ca` records the old session as retired, launches a new one, and seeds
+it with a prompt that rebuilds context from the old session's
+`plan.md`, checkpoints, todo database, and conversation tail. Nothing is
+deleted — the retired session stays on disk, resumable and minable. Set
+to `0` to disable the prompt.
+
+The first carry-over asks Copilot to approve reading
+`~/.copilot/session-state`, which sits outside the agent workspace.
+Choose "add these directories to the allowed list" and later rotations
+run without prompting.
 
 `COPILOT_BIN` / `CLAUDE_BIN` let you point the wrapper at a specific
 backend binary (e.g., `/opt/homebrew/bin/copilot` or a nightly build).

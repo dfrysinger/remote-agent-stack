@@ -30,6 +30,8 @@
 #     copilot: --allow-all
 #     claude : --dangerously-skip-permissions
 #   MAILBOX_INTEGRATION      default: false
+#   SESSION_WARN_MB          default: 300  (copilot only; 0 disables)
+#     Offer to retire a session whose event log has grown past this size.
 
 set -euo pipefail
 
@@ -63,6 +65,7 @@ fi
 : "${COPILOT_BIN:=copilot}"
 : "${CLAUDE_BIN:=claude}"
 : "${AGENT_DIR_PREFIX:=agent-}"
+: "${SESSION_WARN_MB:=300}"
 
 case "$BACKEND" in
   copilot)
@@ -148,20 +151,68 @@ if [ "${MAILBOX_INTEGRATION:-false}" = "true" ]; then
   done
 fi
 
+# ---- carry-over prompt -----------------------------------------------------
+# Seeds a freshly rotated session with instructions to rebuild context from the
+# retired one by reference, rather than by replaying its transcript. Emitted as
+# a single line so it can be typed into the CLI input with tmux send-keys.
+
+build_carryover_prompt() {
+  local old="$1"
+  local ss="$HOME/.copilot/session-state"
+  cat <<EOF | tr '\n' ' '
+You are continuing work from session $old, which was retired because its
+transcript grew too large to reload. Before anything else, rebuild context from
+it, skipping quietly over whatever does not exist: read $ss/$old/plan.md; read
+the two newest files in $ss/$old/checkpoints/; list $ss/$old/files/; run
+sqlite3 $ss/$old/session.db "SELECT id,title,status FROM todos WHERE status !=
+'done'" for unfinished work; and read the tail of the conversation with the
+session_store_sql tool using source=local: SELECT
+turn_index,user_message,assistant_response FROM turns WHERE session_id='$old'
+ORDER BY turn_index DESC LIMIT 12. Then summarize where things stand and what
+you believe the next step is, and wait for my go-ahead before acting.
+EOF
+}
+
+# ---- tmux client safety guards --------------------------------------------
+
+# The tmux server is single threaded: one client it cannot write to blocks the
+# event loop and freezes every session. Two invocations cause that, so both are
+# refused below rather than attached.
+
+# Inside a pane of this same tmux server. $TMUX alone is not enough, because
+# callers sometimes blank it to bypass tmux's own nesting guard; compare the
+# controlling terminal against the server's pane ttys as well.
+inside_tmux() {
+  [ -n "${TMUX:-}" ] && return 0
+  _tty=$(tty 2>/dev/null) || return 1
+  [ "${_tty#/dev/}" = "$_tty" ] && return 1
+  tmux list-panes -a -F '#{pane_tty}' 2>/dev/null | grep -qx "$_tty"
+}
+
+# Attaching with stdout on a pipe creates a client tmux can block writing to
+# once nobody drains it.
+require_terminal() {
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    echo "ca: refusing to attach '$SESSION' without a terminal." >&2
+    echo "ca: this would wedge the tmux server. Run it from an interactive" >&2
+    echo "ca: shell, or inspect the session with:" >&2
+    echo "ca:   tmux capture-pane -p -t $SESSION" >&2
+    exit 1
+  fi
+}
+
 # ---- attach if session exists ---------------------------------------------
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   [ -n "$MAILBOX_POKE" ] && ( "$MAILBOX_POKE" "$SESSION" ) &
+  if inside_tmux; then
+    exec tmux switch-client -t "$SESSION"
+  fi
+  require_terminal
   exec tmux attach -t "$SESSION"
 fi
 
 # ---- new session -----------------------------------------------------------
-
-# Unlock the login keychain so credential helpers (git, gh, etc.) work in
-# this SSH/tmux session. Quietly skipped if not on macOS.
-if [ -f "$HOME/Library/Keychains/login.keychain-db" ] && command -v security >/dev/null 2>&1; then
-  security unlock-keychain "$HOME/Library/Keychains/login.keychain-db" || true
-fi
 
 # ---- build backend-specific launch command --------------------------------
 
@@ -205,12 +256,18 @@ case "$BACKEND" in
     UUID_UPDATED=""
     UUID_TIER=""  # "real" (summary_count>0) wins over "empty" (summary_count==0)
     SESSION_STATE_DIR="$HOME/.copilot/session-state"
+    RETIRED_FILE="$DIR/.ca-retired-sessions"
     if [ -d "$SESSION_STATE_DIR" ]; then
       for ws in "$SESSION_STATE_DIR"/*/workspace.yaml; do
         [ -r "$ws" ] || continue
         this_cwd="$(awk -F': ' '/^cwd: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
         [ "$this_cwd" = "$DIR" ] || continue
         this_id="$(awk -F': ' '/^id: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
+        # Sessions the user chose to retire are never resumed again, so the
+        # scan falls through to whatever session replaced them.
+        if [ -s "$RETIRED_FILE" ] && grep -qxF "$this_id" "$RETIRED_FILE" 2>/dev/null; then
+          continue
+        fi
         this_updated="$(awk -F': ' '/^updated_at: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
         this_count="$(awk -F': ' '/^summary_count: /{sub(/[[:space:]]+$/, "", $2); print $2; exit}' "$ws")"
         if [ -z "$this_count" ] || [ "$this_count" = "0" ]; then
@@ -238,6 +295,36 @@ case "$BACKEND" in
 
     if [ -z "$UUID" ]; then
       UUID="$(python3 -c "import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, 'remote-agent-stack/'+sys.argv[1]))" "$NAME")"
+    fi
+
+    # ---- offer to retire an oversized session ------------------------------
+    # Copilot reloads a session's whole event log on resume, so one carried for
+    # weeks grows into the gigabytes and drags on startup. Offer a fresh
+    # session that inherits context by reference. Nothing is ever deleted — the
+    # retired session stays on disk, resumable and minable.
+    CARRYOVER_PROMPT=""
+    _events="$SESSION_STATE_DIR/$UUID/events.jsonl"
+    if [ -t 0 ] && [ "${SESSION_WARN_MB:-300}" -gt 0 ] && [ -r "$_events" ]; then
+      _mb=$(( $(wc -c < "$_events") / 1048576 ))
+      if [ "$_mb" -ge "${SESSION_WARN_MB}" ]; then
+        echo "" >&2
+        echo "Session for '$NAME' has grown to ${_mb} MB." >&2
+        echo "  $UUID" >&2
+        echo "Copilot replays the whole event log on resume, so this one will be slow" >&2
+        echo "to start. Starting fresh keeps it on disk and carries context forward." >&2
+        printf "Start a fresh session? [y/N/q] " >&2
+        read -r _ans < /dev/tty || _ans=""
+        case "$_ans" in
+          q|Q) echo "Aborted." >&2; exit 0 ;;
+          y|Y)
+            _old="$UUID"
+            printf '%s\n' "$_old" >> "$RETIRED_FILE"
+            UUID="$(uuidgen | tr 'A-Z' 'a-z')"
+            CARRYOVER_PROMPT="$(build_carryover_prompt "$_old")"
+            echo "Retired $_old — starting fresh session $UUID." >&2
+            ;;
+        esac
+      fi
     fi
 
     # Launch by --session-id alone, which Copilot treats as "resume this
@@ -281,5 +368,58 @@ case "$BACKEND" in
     ;;
 esac
 
+# Unlock the login keychain so credential helpers (git, gh, etc.) work in
+# this SSH/tmux session. Done last so any interactive prompt above is settled
+# before the password prompt appears. Quietly skipped if not on macOS.
+if [ -f "$HOME/Library/Keychains/login.keychain-db" ] && command -v security >/dev/null 2>&1; then
+  security unlock-keychain "$HOME/Library/Keychains/login.keychain-db" || true
+fi
+
 [ -n "$MAILBOX_POKE" ] && ( "$MAILBOX_POKE" "$SESSION" --wait ) &
+
+# Type the carry-over prompt once the CLI is up. A single Enter often fails to
+# submit in Copilot's input box, so press it until the input box is empty.
+# The box spans the region between the last two horizontal rules; a long prompt
+# wraps below the `❯` marker, so the whole region has to be checked rather than
+# just the marker line.
+_input_is_empty() {
+  tmux capture-pane -p -t "$1" 2>/dev/null | awk '
+    /^─+$/ { n++; sep[n] = NR }
+    { line[NR] = $0 }
+    END {
+      if (n < 2) exit 1
+      for (i = sep[n-1] + 1; i < sep[n]; i++) {
+        t = line[i]; sub(/❯/, "", t); gsub(/[[:space:]]/, "", t)
+        if (t != "") exit 1
+      }
+      exit 0
+    }'
+}
+
+if [ -n "${CARRYOVER_PROMPT:-}" ]; then
+  (
+    for _ in $(seq 1 120); do
+      if tmux has-session -t "$SESSION" 2>/dev/null && \
+         tmux capture-pane -p -t "$SESSION" 2>/dev/null | tail -10 | grep -q '❯'; then
+        break
+      fi
+      sleep 0.5
+    done
+    sleep 1
+    tmux send-keys -t "$SESSION" -l -- "$CARRYOVER_PROMPT"
+    sleep 0.5
+    for _ in $(seq 1 10); do
+      tmux send-keys -t "$SESSION" Enter
+      sleep 1.5
+      _input_is_empty "$SESSION" && break
+    done
+  ) &
+fi
+
+if inside_tmux; then
+  tmux new-session -d -s "$SESSION" -c "$DIR" \; send-keys -t "$SESSION" "$CMD" Enter
+  exec tmux switch-client -t "$SESSION"
+fi
+
+require_terminal
 exec tmux new-session -s "$SESSION" -c "$DIR" \; send-keys "$CMD" Enter
