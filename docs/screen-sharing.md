@@ -6,12 +6,19 @@ the agent can't reach, or watch a dev app live from your phone. This is
 the macOS Screen Sharing path (the built-in VNC server the **Screens**
 app and Finder's "Screen Sharing" connect to), tunnelled over Tailscale.
 
-Two small scripts live in [`bin/`](../bin):
+Two user-facing scripts live in [`bin/`](../bin):
 
 - **`ss`** — toggle Screen Sharing on/off with an auto-off lease, and
   forward it over the tailnet with `tailscale serve`.
 - **`vncfix`** — recover the "connected, but black screen + cursor"
   symptom.
+
+The installer also places a root-owned helper at
+`/usr/local/libexec/ss-on-demand`. The sudoers rule permits only
+`on 1` through `on 8` and `off`. The helper owns the absolute expiry,
+the Screen Sharing daemon, and the exact Tailscale mapping. A launchd
+watchdog checks the deadline every minute and at startup, so access
+still closes after logout, sleep, reboot, or a failed user process.
 
 ## Install onto PATH
 
@@ -39,22 +46,53 @@ ss status       # daemon state, port 5900 listener, serve mapping, capture-grant
 
 1. Stops Remote Management (ARD) — it shares port 5900 and breaks Screens auth.
 2. Bootstraps + enables the `com.apple.screensharing` LaunchDaemon.
-3. Maps `tailnet:15900 → localhost:5900` via `tailscale serve`.
-4. Arms a background lease that runs `ss off` after `HOURS`, so access
-   never silently stays open.
+3. Maps the configured tailnet port (default `15900`) to
+   `localhost:5900` via `tailscale serve`.
+4. Stores a root-owned absolute deadline enforced by launchd.
 
-It auto-disables Screen Sharing again at the lease deadline. Re-run
-`ss on` to extend.
+It removes both the daemon exposure and the Tailscale mapping at the
+deadline. Re-run `ss on` to extend. The command accepts one through
+eight hours and does not prompt for a password after installation.
 
 ### Connect from Screens
 
-`ss on` prints the connect target — this host's MagicDNS name on port
-`15900`. On a host whose inbound IPv4 is blackholed (see below), use the
-IPv6 form it also prints:
+`ss on` prints a clickable URL using `Self.DNSName` from
+`tailscale status --json` and the configured port:
+
+```
+screens://macbook-air.example.ts.net:15900
+```
+
+The command refuses to open access if it cannot resolve the current
+Tailscale hostname. On a host whose inbound IPv4 is blackholed (see
+below), the MagicDNS hostname normally selects the working tailnet
+route. For manual diagnostics, the equivalent IPv6 form is:
 
 ```
 vnc://[fd7a:115c:a1e0::xxxx:xxxx]:15900
 ```
+
+## Automatic agent help
+
+The installer can register one shared `agent-help` MCP server with
+Copilot CLI, Claude Code, and Codex CLI. Its only tool is
+`request_help`.
+
+When an agent is blocked on a login, permission, or decision:
+
+1. The server validates a fixed reason and a short label.
+2. It sends at most three messages per hour and deduplicates an
+   identical request for ten minutes.
+3. It counts online displays. A positive count below
+   `DESK_DISPLAY_COUNT` means the owner appears away. Zero or unknown
+   displays do not open remote access.
+4. Away mode runs `ss on SCREEN_SHARING_HOURS` and adds the
+   server-derived Screens URL to the iMessage.
+
+The server cannot read Messages, choose a recipient, accept an
+agent-provided URL, or run message content. The private recipient and
+rate-limit state live under
+`~/.config/remote-agent-stack/agent-help/` with private permissions.
 
 ## Black screen + cursor → `vncfix`
 

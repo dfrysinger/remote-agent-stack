@@ -1,0 +1,246 @@
+#!/bin/bash
+# remote-agent-stack managed helper: bounded macOS Screen Sharing + Tailscale.
+
+set -euo pipefail
+
+LOCK_HELD=false
+if [ "${1:-}" = "--locked" ]; then
+  LOCK_HELD=true
+  shift
+fi
+
+if [ "$EUID" -eq 0 ]; then
+  # Never honor caller-controlled path overrides in the privileged execution
+  # path, even if a local sudo policy preserves an unexpected environment key.
+  TEST_MODE=false
+  CONFIG_FILE=/usr/local/etc/remote-agent-stack/screen-sharing.conf
+  STATE_DIR=/var/db/remote-agent-stack
+  SS_PLIST=/System/Library/LaunchDaemons/com.apple.screensharing.plist
+  SS_UNIT=system/com.apple.screensharing
+  ARD_KICKSTART=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+  LAUNCHCTL_BIN=/bin/launchctl
+  LOGGER_BIN=/usr/bin/logger
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin
+  export PATH
+else
+  TEST_MODE="${SS_ON_DEMAND_TEST_MODE:-false}"
+  CONFIG_FILE="${SS_ON_DEMAND_CONFIG_FILE:-/usr/local/etc/remote-agent-stack/screen-sharing.conf}"
+  STATE_DIR="${SS_ON_DEMAND_STATE_DIR:-/var/db/remote-agent-stack}"
+  SS_PLIST="${SS_ON_DEMAND_SS_PLIST:-/System/Library/LaunchDaemons/com.apple.screensharing.plist}"
+  SS_UNIT="${SS_ON_DEMAND_SS_UNIT:-system/com.apple.screensharing}"
+  ARD_KICKSTART="${SS_ON_DEMAND_ARD_KICKSTART:-/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart}"
+  LAUNCHCTL_BIN="${SS_ON_DEMAND_LAUNCHCTL_BIN:-/bin/launchctl}"
+  LOGGER_BIN="${SS_ON_DEMAND_LOGGER_BIN:-/usr/bin/logger}"
+fi
+STATE_FILE="$STATE_DIR/screen-sharing-lease"
+LOCK_FILE="$STATE_DIR/screen-sharing.lock"
+
+if [ "$EUID" -ne 0 ] && [ "$TEST_MODE" != "true" ]; then
+  echo "ss-on-demand must run as root" >&2
+  exit 1
+fi
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "missing root configuration: $CONFIG_FILE" >&2
+  exit 1
+fi
+
+# The file is installed root:wheel 0644 and contains only installer-generated
+# shell assignments.
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+
+case "${INSTALL_USER:-}" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid INSTALL_USER" >&2; exit 1 ;;
+esac
+case "${SCREEN_SHARING_PORT:-}" in
+  ""|*[!0-9]*) echo "invalid SCREEN_SHARING_PORT" >&2; exit 1 ;;
+esac
+if [ "$SCREEN_SHARING_PORT" -lt 1 ] || [ "$SCREEN_SHARING_PORT" -gt 65535 ]; then
+  echo "SCREEN_SHARING_PORT must be between 1 and 65535" >&2
+  exit 1
+fi
+if [ ! -x "${TAILSCALE_BIN:-}" ]; then
+  echo "configured Tailscale CLI is not executable" >&2
+  exit 1
+fi
+
+mkdir -p "$STATE_DIR"
+if [ "$TEST_MODE" != "true" ]; then
+  chown root:wheel "$STATE_DIR"
+  chmod 0755 "$STATE_DIR"
+fi
+if [ -L "$LOCK_FILE" ] || { [ -e "$LOCK_FILE" ] && [ ! -f "$LOCK_FILE" ]; }; then
+  echo "invalid screen-sharing lock file" >&2
+  exit 1
+fi
+if [ ! -e "$LOCK_FILE" ]; then
+  (umask 077 && : > "$LOCK_FILE")
+fi
+if [ "$TEST_MODE" != "true" ]; then
+  chown root:wheel "$LOCK_FILE"
+fi
+chmod 0600 "$LOCK_FILE"
+
+case "${1:-}" in
+  on|off|expire)
+    if [ "$LOCK_HELD" != "true" ]; then
+      if /usr/bin/lockf -s -t 10 -k "$LOCK_FILE" "$0" --locked "$@"; then
+        exit 0
+      else
+        status=$?
+        if [ "$status" -eq 75 ]; then
+          echo "screen-sharing operation lock timed out" >&2
+        fi
+        exit "$status"
+      fi
+    fi
+    ;;
+esac
+
+run_timeout() {
+  local seconds="$1"
+  shift
+  /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/bin/perl -e '
+    my $seconds = shift @ARGV;
+    $SIG{ALRM} = sub { die "command timed out\n" };
+    alarm $seconds;
+    exec @ARGV or die "exec failed: $!\n";
+  ' "$seconds" "$@"
+}
+
+tailscale_as_user() {
+  if [ "$TEST_MODE" = "true" ]; then
+    run_timeout 15 "$TAILSCALE_BIN" "$@"
+    return
+  fi
+  run_timeout 15 /usr/bin/sudo -n -u "$INSTALL_USER" -- "$TAILSCALE_BIN" "$@"
+}
+
+read_expiry() {
+  EXPIRY_EPOCH=0
+  if [ -f "$STATE_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+  fi
+  case "${EXPIRY_EPOCH:-}" in
+    ""|*[!0-9]*) echo "invalid lease state" >&2; exit 1 ;;
+  esac
+}
+
+write_expiry() {
+  local expiry="$1" temporary="$STATE_FILE.$$"
+  printf 'EXPIRY_EPOCH=%s\n' "$expiry" > "$temporary"
+  [ "$TEST_MODE" = "true" ] || chown root:wheel "$temporary"
+  chmod 0644 "$temporary"
+  mv "$temporary" "$STATE_FILE"
+}
+
+mapping_target() {
+  local status
+  status="$(tailscale_as_user serve status --json 2>/dev/null)" || return 1
+  printf '%s' "$status" | /usr/bin/python3 -c '
+import json, sys
+port = sys.argv[1]
+data = json.load(sys.stdin)
+entry = (data.get("TCP") or {}).get(port) or {}
+print(entry.get("TCPForward") or "")
+' "$SCREEN_SHARING_PORT"
+}
+
+is_our_mapping() {
+  [ "${1:-}" = "localhost:5900" ] || [ "${1:-}" = "tcp://localhost:5900" ]
+}
+
+remove_mapping() {
+  local target
+  target="$(mapping_target 2>/dev/null)" || return 1
+  if is_our_mapping "$target"; then
+    tailscale_as_user serve --yes --tcp "$SCREEN_SHARING_PORT" off >/dev/null
+    target="$(mapping_target 2>/dev/null)" || return 1
+    [ -z "$target" ] || {
+      echo "Tailscale mapping remained after removal" >&2
+      return 1
+    }
+  fi
+}
+
+disable_screen_sharing() {
+  run_timeout 10 "$LAUNCHCTL_BIN" bootout "$SS_UNIT" 2>/dev/null || true
+  run_timeout 10 "$LAUNCHCTL_BIN" disable "$SS_UNIT"
+}
+
+teardown() {
+  local mapping_status=0
+  remove_mapping || mapping_status=$?
+  disable_screen_sharing
+  [ "$mapping_status" -eq 0 ] || return "$mapping_status"
+  rm -f "$STATE_FILE"
+}
+
+enable_screen_sharing() {
+  run_timeout 15 "$ARD_KICKSTART" -deactivate -stop >/dev/null 2>&1 || true
+  run_timeout 10 "$LAUNCHCTL_BIN" enable "$SS_UNIT"
+  run_timeout 10 "$LAUNCHCTL_BIN" bootstrap system "$SS_PLIST" 2>/dev/null || true
+  run_timeout 10 "$LAUNCHCTL_BIN" print "$SS_UNIT" >/dev/null
+}
+
+case "${1:-}" in
+  on)
+    case "${2:-}" in
+      1|2|3|4|5|6|7|8) HOURS="$2" ;;
+      *) echo "Usage: ss-on-demand on {1|2|3|4|5|6|7|8}" >&2; exit 2 ;;
+    esac
+    read_expiry
+    NOW="$(date +%s)"
+    PRIOR_ACTIVE=false
+    [ "$EXPIRY_EPOCH" -gt "$NOW" ] && PRIOR_ACTIVE=true
+
+    TARGET="$(mapping_target 2>/dev/null)" || {
+      echo "could not inspect the configured Tailscale port" >&2
+      exit 1
+    }
+    if [ -n "$TARGET" ] && ! is_our_mapping "$TARGET"; then
+      echo "Tailscale port $SCREEN_SHARING_PORT is already mapped to $TARGET" >&2
+      exit 1
+    fi
+
+    NEW_EXPIRY=$((NOW + HOURS * 3600))
+    OLD_EXPIRY="$EXPIRY_EPOCH"
+    write_expiry "$NEW_EXPIRY"
+    rollback_failed_on() {
+      if $PRIOR_ACTIVE; then
+        write_expiry "$OLD_EXPIRY"
+      else
+        teardown
+      fi
+      echo "failed to establish bounded Screen Sharing" >&2
+      exit 1
+    }
+    if ! enable_screen_sharing ||
+       ! tailscale_as_user serve --yes --bg --tcp "$SCREEN_SHARING_PORT" tcp://localhost:5900 >/dev/null; then
+      rollback_failed_on
+    fi
+    ESTABLISHED_TARGET="$(mapping_target 2>/dev/null)" || rollback_failed_on
+    is_our_mapping "$ESTABLISHED_TARGET" || rollback_failed_on
+    "$LOGGER_BIN" -t ss-on-demand "Screen Sharing enabled until $NEW_EXPIRY by ${SUDO_USER:-unknown}"
+    printf 'CREATED_LEASE=%s\nEXPIRY_EPOCH=%s\nSCREEN_SHARING_PORT=%s\n' \
+      "$([ "$PRIOR_ACTIVE" = true ] && echo false || echo true)" \
+      "$NEW_EXPIRY" "$SCREEN_SHARING_PORT"
+    ;;
+  off)
+    teardown
+    "$LOGGER_BIN" -t ss-on-demand "Screen Sharing disabled by ${SUDO_USER:-unknown}"
+    ;;
+  expire)
+    read_expiry
+    NOW="$(date +%s)"
+    if [ "$EXPIRY_EPOCH" -gt 0 ] && [ "$NOW" -ge "$EXPIRY_EPOCH" ]; then
+      teardown
+      "$LOGGER_BIN" -t ss-on-demand "Screen Sharing lease expired"
+    fi
+    ;;
+  *)
+    echo "Usage: ss-on-demand {on HOURS|off|expire}" >&2
+    exit 2
+    ;;
+esac
