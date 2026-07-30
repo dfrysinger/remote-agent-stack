@@ -23,6 +23,7 @@ WRAPPER_SRC="$REPO_ROOT/bin/agent"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/remote-agent-stack"
 MCP_SERVER="$CONFIG_DIR/agent-help/server/server.mjs"
 MANAGE_AGENT_HELP="$REPO_ROOT/scripts/manage-agent-help.mjs"
+MANAGE_SKILLS_PLUGIN="$REPO_ROOT/scripts/manage-skills-plugin.mjs"
 SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
 SS_ROOT_CONFIG_DIR="/usr/local/etc/remote-agent-stack"
 SS_STATE_DIR="/var/db/remote-agent-stack"
@@ -31,6 +32,7 @@ SS_EXPIRY_LABEL="com.remote-agent-stack.screen-sharing-expiry"
 SS_SUDOERS="/etc/sudoers.d/ss-on-demand"
 
 PURGE=false
+UNINSTALL_STATUS=0
 for arg in "$@"; do
   case "$arg" in
     --purge) PURGE=true ;;
@@ -129,6 +131,23 @@ if command -v node >/dev/null 2>&1 && [ -f "$MANAGE_AGENT_HELP" ]; then
 else
   echo "Node.js and $MANAGE_AGENT_HELP are required for ownership-safe MCP removal." >&2
   exit 1
+fi
+
+bold "Removing owned dfrysinger skills plugins"
+if command -v node >/dev/null 2>&1 && [ -f "$MANAGE_SKILLS_PLUGIN" ]; then
+  if node "$MANAGE_SKILLS_PLUGIN" \
+    --mode reconcile \
+    --clis "" \
+    --explicit-clis "" \
+    --fail-on-residual true; then
+    ok "removed owned plugins and marketplaces from available CLIs"
+  else
+    echo "Some owned skills plugin artifacts could not be removed; continuing stack cleanup." >&2
+    UNINSTALL_STATUS=1
+  fi
+else
+  echo "Node.js and $MANAGE_SKILLS_PLUGIN are required for ownership-safe skills removal; continuing." >&2
+  UNINSTALL_STATUS=1
 fi
 
 bold "Removing copilot-agent wrapper"
@@ -234,4 +253,8 @@ echo "  • Copilot CLI + ~/.copilot: per Copilot CLI docs"
 echo "  • Tailscale network state:  sudo tailscale logout"
 if [ "$PURGE" = "false" ]; then
   echo "  • Wrapper + recipient config: re-run with --purge"
+fi
+if [ "$UNINSTALL_STATUS" -ne 0 ]; then
+  echo "  • Skills plugin state: restore missing CLIs and rerun uninstall"
+  exit "$UNINSTALL_STATUS"
 fi

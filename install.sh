@@ -25,6 +25,7 @@ set -euo pipefail
 COPILOT_WORKSPACE_BASE_ARG=""
 CLAUDE_WORKSPACE_BASE_ARG=""
 AGENT_HELP_CLIS_ARG=""
+SKILLS_CLIS_ARG=""
 AGENT_HELP_RECIPIENT_ARG="${AGENT_HELP_RECIPIENT:-}"
 SCREEN_SHARING_PORT_ARG=""
 DESK_DISPLAY_COUNT_ARG=""
@@ -40,6 +41,8 @@ Options:
   --claude-workspace-base  PATH  Where claude  agent workspaces live
                                  (parent dir for agent-<name>/ subdirs).
   --agent-help-clis LIST          Complete desired set of CLIs to configure:
+                                 copilot,claude,codex or none.
+  --skills-clis LIST              Complete desired set for dfrysinger-skills:
                                  copilot,claude,codex or none.
   --agent-help-recipient HANDLE  iMessage phone number or Apple ID. Prefer the
                                  interactive no-echo prompt or
@@ -73,6 +76,11 @@ while [ $# -gt 0 ]; do
       AGENT_HELP_CLIS_ARG="$2"; shift 2 ;;
     --agent-help-clis=*)
       AGENT_HELP_CLIS_ARG="${1#*=}"; shift ;;
+    --skills-clis)
+      [ $# -ge 2 ] || { echo "--skills-clis requires a list" >&2; exit 2; }
+      SKILLS_CLIS_ARG="$2"; shift 2 ;;
+    --skills-clis=*)
+      SKILLS_CLIS_ARG="${1#*=}"; shift ;;
     --agent-help-recipient)
       [ $# -ge 2 ] || { echo "--agent-help-recipient requires a handle" >&2; exit 2; }
       AGENT_HELP_RECIPIENT_ARG="$2"; shift 2 ;;
@@ -120,6 +128,7 @@ MCP_SRC="$REPO_ROOT/mcp/agent-help"
 MCP_DST="$CONFIG_DIR/agent-help/server"
 MCP_SERVER="$MCP_DST/server.mjs"
 MANAGE_AGENT_HELP="$REPO_ROOT/scripts/manage-agent-help.mjs"
+MANAGE_SKILLS_PLUGIN="$REPO_ROOT/scripts/manage-skills-plugin.mjs"
 SS_ROOT_SRC="$REPO_ROOT/libexec/ss-on-demand"
 SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
 SS_ROOT_CONFIG="/usr/local/etc/remote-agent-stack/screen-sharing.conf"
@@ -297,6 +306,59 @@ fi
 [ -n "$AGENT_HELP_CLIS_RESOLVED" ] && [ -z "$AGENT_HELP_RECIPIENT_RESOLVED" ] &&
   fail "agent help recipient cannot be empty"
 
+# ---- skills plugin selection ----------------------------------------------
+
+bold "dfrysinger skills plugin"
+
+DETECTED_SKILLS_LIST=""
+for cli in copilot claude codex; do
+  if have "$cli"; then
+    [ -n "$DETECTED_SKILLS_LIST" ] && DETECTED_SKILLS_LIST="$DETECTED_SKILLS_LIST,"
+    DETECTED_SKILLS_LIST="$DETECTED_SKILLS_LIST$cli"
+  fi
+done
+EXISTING_SKILLS_CLIS="$(read_config_var SKILLS_CLIS)"
+SKILLS_EXPLICIT_CLIS=""
+
+if [ -n "$SKILLS_CLIS_ARG" ]; then
+  SKILLS_CLIS_RESOLVED="$SKILLS_CLIS_ARG"
+  SKILLS_EXPLICIT_CLIS="$SKILLS_CLIS_ARG"
+elif [ -n "$EXISTING_SKILLS_CLIS" ]; then
+  SKILLS_CLIS_RESOLVED="$EXISTING_SKILLS_CLIS"
+  ok "keeping existing skills CLI selection: ${SKILLS_CLIS_RESOLVED:-none}"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo "    Install the dfrysinger-skills plugin for which CLIs?"
+  echo "    Detected: ${DETECTED_SKILLS_LIST:-none}"
+  printf "    Comma-separated list or none [%s]: " "${DETECTED_SKILLS_LIST:-none}"
+  read -r SKILLS_INPUT || SKILLS_INPUT=""
+  SKILLS_CLIS_RESOLVED="${SKILLS_INPUT:-${DETECTED_SKILLS_LIST:-none}}"
+else
+  SKILLS_CLIS_RESOLVED="${DETECTED_SKILLS_LIST:-none}"
+  ok "non-interactive skills selection: $SKILLS_CLIS_RESOLVED"
+fi
+
+if [ "$SKILLS_CLIS_RESOLVED" = "none" ]; then
+  SKILLS_CLIS_RESOLVED=""
+fi
+SKILLS_CLIS_RESOLVED="$(printf '%s' "$SKILLS_CLIS_RESOLVED" | tr -d '[:space:]')"
+if [ "$SKILLS_EXPLICIT_CLIS" = "none" ]; then
+  SKILLS_EXPLICIT_CLIS=""
+fi
+SKILLS_EXPLICIT_CLIS="$(printf '%s' "$SKILLS_EXPLICIT_CLIS" | tr -d '[:space:]')"
+remaining_clis="$SKILLS_CLIS_RESOLVED"
+while [ -n "$remaining_clis" ]; do
+  cli="${remaining_clis%%,*}"
+  if [ "$remaining_clis" = "$cli" ]; then
+    remaining_clis=""
+  else
+    remaining_clis="${remaining_clis#*,}"
+  fi
+  [ -n "$cli" ] || fail "skills CLI list contains an empty item"
+  case "$cli" in copilot|claude|codex) ;; *) fail "unsupported skills CLI: $cli" ;; esac
+done
+[ -n "$SKILLS_CLIS_RESOLVED" ] && ok "skills CLIs: $SKILLS_CLIS_RESOLVED" ||
+  skip "dfrysinger-skills disabled"
+
 EXISTING_SCREEN_SHARING_PORT="$(read_config_var SCREEN_SHARING_PORT)"
 EXISTING_DESK_DISPLAY_COUNT="$(read_config_var DESK_DISPLAY_COUNT)"
 EXISTING_SCREEN_SHARING_HOURS="$(read_config_var SCREEN_SHARING_HOURS)"
@@ -313,6 +375,12 @@ node "$MANAGE_AGENT_HELP" \
   --node "$(command -v node)" \
   --server "$MCP_SERVER"
 ok "selected CLI configuration is ownership-safe"
+
+node "$MANAGE_SKILLS_PLUGIN" \
+  --mode check \
+  --clis "$SKILLS_CLIS_RESOLVED" \
+  --explicit-clis "$SKILLS_EXPLICIT_CLIS"
+ok "selected skills plugin configuration is ownership-safe"
 
 # ---- detect what needs root -----------------------------------------------
 #
@@ -440,7 +508,8 @@ done
 
 # Ensure the wrapper + GUI helpers are executable (no sudo needed).
 chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC" "$SS_ROOT_SRC" \
-  "$MCP_SRC/server.mjs" "$MCP_SRC/configure.mjs" "$MANAGE_AGENT_HELP"
+  "$MCP_SRC/server.mjs" "$MCP_SRC/configure.mjs" "$MANAGE_AGENT_HELP" \
+  "$MANAGE_SKILLS_PLUGIN"
 
 if [ ! -f "$SS_ROOT_DST" ] || ! cmp -s "$SS_ROOT_SRC" "$SS_ROOT_DST" ||
    [ ! -f "$SS_EXPIRY_PLIST_DST" ] ||
@@ -926,6 +995,7 @@ ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 # Agent-to-owner help MCP. The recipient itself is stored separately in
 # agent-help/config.json (mode 0600), never in this regenerated wrapper file.
 AGENT_HELP_CLIS="${AGENT_HELP_CLIS_RESOLVED:-none}"
+SKILLS_CLIS="${SKILLS_CLIS_RESOLVED:-none}"
 SCREEN_SHARING_PORT="$SCREEN_SHARING_PORT_RESOLVED"
 DESK_DISPLAY_COUNT="$DESK_DISPLAY_COUNT_RESOLVED"
 SCREEN_SHARING_HOURS="$SCREEN_SHARING_HOURS_RESOLVED"
@@ -1180,6 +1250,21 @@ else
   warn "codex CLI not found in PATH — it cannot be selected for request_help until installed."
 fi
 
+# ---- shared skills plugin --------------------------------------------------
+
+bold "dfrysinger skills plugin"
+
+node "$MANAGE_SKILLS_PLUGIN" \
+  --mode reconcile \
+  --clis "$SKILLS_CLIS_RESOLVED" \
+  --explicit-clis "$SKILLS_EXPLICIT_CLIS"
+if [ -n "$SKILLS_CLIS_RESOLVED" ]; then
+  ok "configured dfrysinger-skills for $SKILLS_CLIS_RESOLVED"
+  todo "restart active CLI sessions so they load the updated skills"
+else
+  ok "removed owned dfrysinger-skills plugins and marketplaces"
+fi
+
 # ---- manual steps ---------------------------------------------------------
 #
 # FDA paths must be the REAL binary (the Cellar path), not the symlink
@@ -1245,6 +1330,9 @@ cat <<MANUAL
      tools. It should expose \`request_help\`. The first real send may
      trigger a macOS Automation prompt allowing the terminal host to
      control Messages; approve it on the Mac.
+
+     Restart each CLI selected for dfrysinger-skills, then inspect its plugin
+     list. It should report \`dfrysinger-skills\`.
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
        ca alpha    # or: cc alpha

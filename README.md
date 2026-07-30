@@ -283,6 +283,7 @@ The help-tool selection can also be supplied noninteractively:
 ```bash
 AGENT_HELP_RECIPIENT='you@example.com' ./install.sh \
   --agent-help-clis copilot,claude,codex \
+  --skills-clis copilot,claude,codex \
   --screen-sharing-port 15900 \
   --desk-display-count 3 \
   --screen-sharing-hours 1
@@ -293,6 +294,21 @@ The recipient is stored only in
 `0600`. Prefer the hidden interactive prompt or the temporary
 `AGENT_HELP_RECIPIENT` environment variable over a command-line flag
 so the value does not enter shell history.
+
+The installer also offers to install
+[`dfrysinger/skills`](https://github.com/dfrysinger/skills) through each
+CLI's native user-scoped plugin manager. Supply the complete desired set
+noninteractively with:
+
+```bash
+./install.sh --skills-clis copilot,claude,codex
+```
+
+Use `--skills-clis none` or a smaller list to remove only plugins and
+marketplaces created by this installer. Pre-existing installations are
+preserved. Ownership state lives under
+`${XDG_STATE_HOME:-~/.local/state}/remote-agent-stack/`, outside the
+purgeable recipient and wrapper configuration.
 
 ### 1.8 — Workspace locations
 
@@ -666,6 +682,11 @@ with `--agent-help-clis none` or a smaller list to remove only this
 repository's MCP entries and instruction blocks from deselected CLIs.
 Existing unrelated CLI configuration and instruction text are
 preserved.
+
+`SKILLS_CLIS` is the independently managed set for the
+`dfrysinger-skills` plugin. Reruns update installations created by this
+installer. Deselecting a CLI removes only owned plugin and marketplace
+registrations; same-named user-managed installations are left untouched.
 
 The installer writes the same managed help guidance to:
 
