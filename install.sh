@@ -414,9 +414,8 @@ _running_tailscaled_path() {
   # one (which is how launchd and brew services both start tailscaled).
   # We deliberately match only exec paths that END in /tailscaled so we
   # don't false-positive on the io.tailscale.ipn.macsys.* system extension.
-  ps -Ao command 2>/dev/null \
-    | awk '{ print $1 }' \
-    | awk '/\/tailscaled$/ { print; exit }'
+  ps -Ao command 2>/dev/null |
+    awk '!found && $1 ~ /\/tailscaled$/ { print $1; found = 1 }'
 }
 
 RUNNING_TAILSCALED_PATH="$(_running_tailscaled_path)"
