@@ -24,6 +24,11 @@ set -euo pipefail
 
 COPILOT_WORKSPACE_BASE_ARG=""
 CLAUDE_WORKSPACE_BASE_ARG=""
+AGENT_HELP_CLIS_ARG=""
+AGENT_HELP_RECIPIENT_ARG="${AGENT_HELP_RECIPIENT:-}"
+SCREEN_SHARING_PORT_ARG=""
+DESK_DISPLAY_COUNT_ARG=""
+SCREEN_SHARING_HOURS_ARG=""
 
 usage() {
   cat <<USAGE
@@ -34,9 +39,18 @@ Options:
                                  (parent dir for agent-<name>/ subdirs).
   --claude-workspace-base  PATH  Where claude  agent workspaces live
                                  (parent dir for agent-<name>/ subdirs).
+  --agent-help-clis LIST          Complete desired set of CLIs to configure:
+                                 copilot,claude,codex or none.
+  --agent-help-recipient HANDLE  iMessage phone number or Apple ID. Prefer the
+                                 interactive no-echo prompt or
+                                 AGENT_HELP_RECIPIENT to avoid shell history.
+  --screen-sharing-port PORT     Tailscale Serve TCP port (default: 15900).
+  --desk-display-count COUNT     Online display count when the owner is at the
+                                 desk (default: 3).
+  --screen-sharing-hours HOURS   Automatic access lease, 1-8 (default: 1).
 
-  If either flag is omitted, the installer auto-detects Dropbox and
-  prompts interactively with smart defaults.
+  If either workspace flag is omitted, the installer auto-detects
+  Dropbox and prompts interactively with smart defaults.
 
   -h, --help                     Show this help and exit.
 USAGE
@@ -54,6 +68,31 @@ while [ $# -gt 0 ]; do
       CLAUDE_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
     --claude-workspace-base=*)
       CLAUDE_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
+    --agent-help-clis)
+      [ $# -ge 2 ] || { echo "--agent-help-clis requires a list" >&2; exit 2; }
+      AGENT_HELP_CLIS_ARG="$2"; shift 2 ;;
+    --agent-help-clis=*)
+      AGENT_HELP_CLIS_ARG="${1#*=}"; shift ;;
+    --agent-help-recipient)
+      [ $# -ge 2 ] || { echo "--agent-help-recipient requires a handle" >&2; exit 2; }
+      AGENT_HELP_RECIPIENT_ARG="$2"; shift 2 ;;
+    --agent-help-recipient=*)
+      AGENT_HELP_RECIPIENT_ARG="${1#*=}"; shift ;;
+    --screen-sharing-port)
+      [ $# -ge 2 ] || { echo "--screen-sharing-port requires a port" >&2; exit 2; }
+      SCREEN_SHARING_PORT_ARG="$2"; shift 2 ;;
+    --screen-sharing-port=*)
+      SCREEN_SHARING_PORT_ARG="${1#*=}"; shift ;;
+    --desk-display-count)
+      [ $# -ge 2 ] || { echo "--desk-display-count requires a count" >&2; exit 2; }
+      DESK_DISPLAY_COUNT_ARG="$2"; shift 2 ;;
+    --desk-display-count=*)
+      DESK_DISPLAY_COUNT_ARG="${1#*=}"; shift ;;
+    --screen-sharing-hours)
+      [ $# -ge 2 ] || { echo "--screen-sharing-hours requires a duration" >&2; exit 2; }
+      SCREEN_SHARING_HOURS_ARG="$2"; shift 2 ;;
+    --screen-sharing-hours=*)
+      SCREEN_SHARING_HOURS_ARG="${1#*=}"; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -77,6 +116,17 @@ VNCFIX_DST="/usr/local/bin/vncfix"
 RESOLVER_SRC="$REPO_ROOT/etc/resolver-ts.net"
 RESOLVER_DST="/etc/resolver/ts.net"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/remote-agent-stack"
+MCP_SRC="$REPO_ROOT/mcp/agent-help"
+MCP_DST="$CONFIG_DIR/agent-help/server"
+MCP_SERVER="$MCP_DST/server.mjs"
+MANAGE_AGENT_HELP="$REPO_ROOT/scripts/manage-agent-help.mjs"
+SS_ROOT_SRC="$REPO_ROOT/libexec/ss-on-demand"
+SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
+SS_ROOT_CONFIG="/usr/local/etc/remote-agent-stack/screen-sharing.conf"
+SS_EXPIRY_PLIST_SRC="$REPO_ROOT/etc/com.remote-agent-stack.screen-sharing-expiry.plist"
+SS_EXPIRY_PLIST_DST="/Library/LaunchDaemons/com.remote-agent-stack.screen-sharing-expiry.plist"
+SS_EXPIRY_LABEL="com.remote-agent-stack.screen-sharing-expiry"
+SS_SUDOERS_DST="/etc/sudoers.d/ss-on-demand"
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -87,6 +137,24 @@ warn()  { printf '  \033[33m!\033[0m %s\n' "$*"; }
 todo()  { printf '  \033[36m→\033[0m %s\n' "$*"; }
 fail()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 have()  { command -v "$1" >/dev/null 2>&1; }
+
+read_config_var() {
+  local var="$1"
+  [ -f "$CONFIG_DIR/config" ] || return 0
+  awk -v v="$var" -F'=' '$1 ~ "^[[:space:]]*" v "$" {
+    sub("^[[:space:]]*" v "=", "", $0)
+    gsub(/^"|"$/, "", $0)
+    print
+    exit
+  }' "$CONFIG_DIR/config" 2>/dev/null || true
+}
+
+validate_integer() {
+  local label="$1" value="$2" minimum="$3" maximum="$4"
+  case "$value" in ""|*[!0-9]*) fail "$label must be an integer" ;; esac
+  [ "$value" -ge "$minimum" ] && [ "$value" -le "$maximum" ] ||
+    fail "$label must be between $minimum and $maximum"
+}
 
 # ---- preflight -------------------------------------------------------------
 
@@ -135,7 +203,7 @@ fi
 
 bold "Homebrew packages"
 
-for pkg in tmux tailscale; do
+for pkg in tmux tailscale node; do
   if brew list --formula "$pkg" >/dev/null 2>&1; then
     ok "$pkg already installed"
   else
@@ -143,6 +211,108 @@ for pkg in tmux tailscale; do
     brew install "$pkg"
   fi
 done
+
+# ---- agent-help selection --------------------------------------------------
+
+bold "Agent help MCP"
+
+DETECTED_AGENT_HELP_LIST=""
+for cli in copilot claude codex; do
+  if have "$cli"; then
+    [ -n "$DETECTED_AGENT_HELP_LIST" ] && DETECTED_AGENT_HELP_LIST="$DETECTED_AGENT_HELP_LIST,"
+    DETECTED_AGENT_HELP_LIST="$DETECTED_AGENT_HELP_LIST$cli"
+  fi
+done
+EXISTING_AGENT_HELP_CLIS="$(read_config_var AGENT_HELP_CLIS)"
+
+if [ -n "$AGENT_HELP_CLIS_ARG" ]; then
+  AGENT_HELP_CLIS_RESOLVED="$AGENT_HELP_CLIS_ARG"
+elif [ -n "$EXISTING_AGENT_HELP_CLIS" ]; then
+  AGENT_HELP_CLIS_RESOLVED="$EXISTING_AGENT_HELP_CLIS"
+  ok "keeping existing CLI selection: ${AGENT_HELP_CLIS_RESOLVED:-none}"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo "    Configure the request_help tool for which CLIs?"
+  echo "    Detected: ${DETECTED_AGENT_HELP_LIST:-none}"
+  printf "    Comma-separated list or none [%s]: " "${DETECTED_AGENT_HELP_LIST:-none}"
+  read -r AGENT_HELP_INPUT || AGENT_HELP_INPUT=""
+  AGENT_HELP_CLIS_RESOLVED="${AGENT_HELP_INPUT:-${DETECTED_AGENT_HELP_LIST:-none}}"
+else
+  if [ -n "$AGENT_HELP_RECIPIENT_ARG" ] ||
+     [ -f "$CONFIG_DIR/agent-help/config.json" ] ||
+     [ -f "$HOME/.copilot/agent-help.json" ]; then
+    AGENT_HELP_CLIS_RESOLVED="${DETECTED_AGENT_HELP_LIST:-none}"
+    ok "non-interactive selection: $AGENT_HELP_CLIS_RESOLVED"
+  else
+    AGENT_HELP_CLIS_RESOLVED="none"
+    warn "non-interactive shell without a recipient — leaving agent help disabled"
+    todo "enable later with AGENT_HELP_RECIPIENT and --agent-help-clis"
+  fi
+fi
+
+if [ "$AGENT_HELP_CLIS_RESOLVED" = "none" ]; then
+  AGENT_HELP_CLIS_RESOLVED=""
+fi
+AGENT_HELP_CLIS_RESOLVED="$(printf '%s' "$AGENT_HELP_CLIS_RESOLVED" | tr -d '[:space:]')"
+remaining_clis="$AGENT_HELP_CLIS_RESOLVED"
+while [ -n "$remaining_clis" ]; do
+  cli="${remaining_clis%%,*}"
+  if [ "$remaining_clis" = "$cli" ]; then
+    remaining_clis=""
+  else
+    remaining_clis="${remaining_clis#*,}"
+  fi
+  [ -n "$cli" ] || fail "agent-help CLI list contains an empty item"
+  case "$cli" in copilot|claude|codex) ;; *) fail "unsupported agent-help CLI: $cli" ;; esac
+  have "$cli" || fail "$cli was selected for agent help but is not installed"
+done
+[ -n "$AGENT_HELP_CLIS_RESOLVED" ] && ok "agent help CLIs: $AGENT_HELP_CLIS_RESOLVED" ||
+  skip "agent help MCP disabled"
+
+AGENT_HELP_CONFIG="$CONFIG_DIR/agent-help/config.json"
+EXISTING_AGENT_HELP_RECIPIENT=""
+if [ -f "$AGENT_HELP_CONFIG" ]; then
+  EXISTING_AGENT_HELP_RECIPIENT="$(/usr/bin/python3 -c '
+import json, sys
+print((json.load(open(sys.argv[1])).get("recipient") or "").strip())
+' "$AGENT_HELP_CONFIG" 2>/dev/null || true)"
+elif [ -f "$HOME/.copilot/agent-help.json" ]; then
+  EXISTING_AGENT_HELP_RECIPIENT="$(/usr/bin/python3 -c '
+import json, sys
+print((json.load(open(sys.argv[1])).get("recipient") or "").strip())
+' "$HOME/.copilot/agent-help.json" 2>/dev/null || true)"
+  [ -n "$EXISTING_AGENT_HELP_RECIPIENT" ] &&
+    ok "found legacy private recipient for migration"
+fi
+
+AGENT_HELP_RECIPIENT_RESOLVED="${AGENT_HELP_RECIPIENT_ARG:-$EXISTING_AGENT_HELP_RECIPIENT}"
+if [ -n "$AGENT_HELP_CLIS_RESOLVED" ] && [ -z "$AGENT_HELP_RECIPIENT_RESOLVED" ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf "    iMessage phone number or Apple ID (input hidden): "
+    IFS= read -r -s AGENT_HELP_RECIPIENT_RESOLVED || true
+    echo
+  else
+    fail "agent help requires AGENT_HELP_RECIPIENT or --agent-help-recipient"
+  fi
+fi
+[ -n "$AGENT_HELP_CLIS_RESOLVED" ] && [ -z "$AGENT_HELP_RECIPIENT_RESOLVED" ] &&
+  fail "agent help recipient cannot be empty"
+
+EXISTING_SCREEN_SHARING_PORT="$(read_config_var SCREEN_SHARING_PORT)"
+EXISTING_DESK_DISPLAY_COUNT="$(read_config_var DESK_DISPLAY_COUNT)"
+EXISTING_SCREEN_SHARING_HOURS="$(read_config_var SCREEN_SHARING_HOURS)"
+SCREEN_SHARING_PORT_RESOLVED="${SCREEN_SHARING_PORT_ARG:-${EXISTING_SCREEN_SHARING_PORT:-15900}}"
+DESK_DISPLAY_COUNT_RESOLVED="${DESK_DISPLAY_COUNT_ARG:-${EXISTING_DESK_DISPLAY_COUNT:-3}}"
+SCREEN_SHARING_HOURS_RESOLVED="${SCREEN_SHARING_HOURS_ARG:-${EXISTING_SCREEN_SHARING_HOURS:-1}}"
+validate_integer "screen sharing port" "$SCREEN_SHARING_PORT_RESOLVED" 1 65535
+validate_integer "desk display count" "$DESK_DISPLAY_COUNT_RESOLVED" 1 16
+validate_integer "screen sharing hours" "$SCREEN_SHARING_HOURS_RESOLVED" 1 8
+
+node "$MANAGE_AGENT_HELP" \
+  --mode check \
+  --clis "$AGENT_HELP_CLIS_RESOLVED" \
+  --node "$(command -v node)" \
+  --server "$MCP_SERVER"
+ok "selected CLI configuration is ownership-safe"
 
 # ---- detect what needs root -----------------------------------------------
 #
@@ -153,6 +323,7 @@ NEED_TAILSCALED_START=false
 NEED_RESOLVER_WRITE=false
 NEED_USRLOCALBIN_MKDIR=false
 NEED_SYMLINK=false
+NEED_SCREEN_SHARING_INSTALL=false
 
 # ---- tailscaled: detect sandboxed / non-brew build ------------------------
 #
@@ -268,13 +439,26 @@ for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
 done
 
 # Ensure the wrapper + GUI helpers are executable (no sudo needed).
-chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC"
+chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC" "$SS_ROOT_SRC" \
+  "$MCP_SRC/server.mjs" "$MCP_SRC/configure.mjs" "$MANAGE_AGENT_HELP"
+
+if [ ! -f "$SS_ROOT_DST" ] || ! cmp -s "$SS_ROOT_SRC" "$SS_ROOT_DST" ||
+   [ ! -f "$SS_EXPIRY_PLIST_DST" ] ||
+   ! cmp -s "$SS_EXPIRY_PLIST_SRC" "$SS_EXPIRY_PLIST_DST" ||
+   [ ! -f "$SS_SUDOERS_DST" ] ||
+   [ ! -f "$SS_ROOT_CONFIG" ] ||
+   ! grep -q "^INSTALL_USER='$USER'$" "$SS_ROOT_CONFIG" 2>/dev/null ||
+   ! grep -q "^SCREEN_SHARING_PORT='$SCREEN_SHARING_PORT_RESOLVED'$" "$SS_ROOT_CONFIG" 2>/dev/null ||
+   ! launchctl print "system/$SS_EXPIRY_LABEL" >/dev/null 2>&1; then
+  NEED_SCREEN_SHARING_INSTALL=true
+fi
 
 # ---- single sudo block -----------------------------------------------------
 
 bold "Privileged operations"
 
-if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || $NEED_SYMLINK; then
+if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
+   $NEED_SYMLINK || $NEED_SCREEN_SHARING_INSTALL; then
   echo
   echo "  The following privileged operations are needed:"
   $NEED_TAILSCALED_START   && echo "    • start tailscaled (brew services start tailscale)"
@@ -283,6 +467,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST, $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
   $NEED_SYMLINK            && echo "    • symlink $CLAUDE_WRAPPER_DST, $CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC"
   $NEED_SYMLINK            && echo "    • symlink $SS_DST, $VNCFIX_DST -> bin/{ss,vncfix}"
+  $NEED_SCREEN_SHARING_INSTALL && echo "    • install bounded Screen Sharing helper, watchdog, and exact sudoers rules"
   echo
   echo "  ============================================================"
   echo "  >>>  Enter your login password at the prompt below.       <<<"
@@ -295,6 +480,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   NEED_RESOLVER_WRITE="$NEED_RESOLVER_WRITE" \
   NEED_USRLOCALBIN_MKDIR="$NEED_USRLOCALBIN_MKDIR" \
   NEED_SYMLINK="$NEED_SYMLINK" \
+  NEED_SCREEN_SHARING_INSTALL="$NEED_SCREEN_SHARING_INSTALL" \
   RESOLVER_SRC="$RESOLVER_SRC" \
   RESOLVER_DST="$RESOLVER_DST" \
   WRAPPER_SRC="$WRAPPER_SRC" \
@@ -306,8 +492,18 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
   SS_DST="$SS_DST" \
   VNCFIX_SRC="$VNCFIX_SRC" \
   VNCFIX_DST="$VNCFIX_DST" \
+  SS_ROOT_SRC="$SS_ROOT_SRC" \
+  SS_ROOT_DST="$SS_ROOT_DST" \
+  SS_ROOT_CONFIG="$SS_ROOT_CONFIG" \
+  SS_EXPIRY_PLIST_SRC="$SS_EXPIRY_PLIST_SRC" \
+  SS_EXPIRY_PLIST_DST="$SS_EXPIRY_PLIST_DST" \
+  SS_EXPIRY_LABEL="$SS_EXPIRY_LABEL" \
+  SS_SUDOERS_DST="$SS_SUDOERS_DST" \
+  INSTALL_USER="$USER" \
+  SCREEN_SHARING_PORT="$SCREEN_SHARING_PORT_RESOLVED" \
+  TAILSCALE_BIN="$(command -v tailscale)" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,CLAUDE_WRAPPER_DST,CLAUDE_WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,NEED_SCREEN_SHARING_INSTALL,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,CLAUDE_WRAPPER_DST,CLAUDE_WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,SS_ROOT_SRC,SS_ROOT_DST,SS_ROOT_CONFIG,SS_EXPIRY_PLIST_SRC,SS_EXPIRY_PLIST_DST,SS_EXPIRY_LABEL,SS_SUDOERS_DST,INSTALL_USER,SCREEN_SHARING_PORT,TAILSCALE_BIN,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -322,6 +518,147 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR || 
     if [ "$NEED_USRLOCALBIN_MKDIR" = "true" ]; then
       echo "  → creating /usr/local/bin"
       mkdir -p /usr/local/bin
+    fi
+    if [ "$NEED_SCREEN_SHARING_INSTALL" = "true" ]; then
+      case "$INSTALL_USER" in
+        ""|*[!A-Za-z0-9._-]*) echo "invalid installing username" >&2; exit 1 ;;
+      esac
+      case "$SCREEN_SHARING_PORT" in
+        ""|*[!0-9]*) echo "invalid Screen Sharing port" >&2; exit 1 ;;
+      esac
+      for managed_parent in /usr/local/libexec /usr/local/etc /var/db; do
+        if [ -L "$managed_parent" ]; then
+          echo "refusing symlinked privileged parent: $managed_parent" >&2
+          exit 1
+        fi
+      done
+      validate_privileged_dir() {
+        local path="$1" owner mode
+        [ -d "$path" ] || return 0
+        owner="$(stat -f %Su "$path")"
+        mode="$(stat -f %OLp "$path")"
+        if [ "$owner" != root ] || [ $((8#$mode & 8#022)) -ne 0 ]; then
+          echo "privileged path must be root-owned and not group/other-writable: $path" >&2
+          exit 1
+        fi
+      }
+      validate_privileged_dir /usr/local
+      validate_privileged_dir /usr/local/libexec
+      validate_privileged_dir /usr/local/etc
+      validate_privileged_dir /var
+      validate_privileged_dir /var/db
+
+      if [ -L "$SS_ROOT_DST" ]; then
+        echo "refusing to replace symlinked helper: $SS_ROOT_DST" >&2
+        exit 1
+      fi
+      if [ -f "$SS_ROOT_DST" ]; then
+        if grep -q "remote-agent-stack managed helper" "$SS_ROOT_DST" ||
+           grep -q "ss-on-demand must run as root" "$SS_ROOT_DST"; then
+          "$SS_ROOT_DST" off >/dev/null
+        else
+          echo "refusing to overwrite foreign helper: $SS_ROOT_DST" >&2
+          exit 1
+        fi
+      fi
+      if [ -L "$SS_ROOT_CONFIG" ] ||
+         { [ -f "$SS_ROOT_CONFIG" ] &&
+           ! grep -q '^INSTALL_USER=' "$SS_ROOT_CONFIG"; }; then
+        echo "refusing to overwrite foreign root config: $SS_ROOT_CONFIG" >&2
+        exit 1
+      fi
+      if [ -L "$SS_EXPIRY_PLIST_DST" ] ||
+         { [ -f "$SS_EXPIRY_PLIST_DST" ] &&
+           ! grep -q '<string>com.remote-agent-stack.screen-sharing-expiry</string>' "$SS_EXPIRY_PLIST_DST"; }; then
+        echo "refusing to overwrite foreign LaunchDaemon: $SS_EXPIRY_PLIST_DST" >&2
+        exit 1
+      fi
+      if [ -L "$SS_SUDOERS_DST" ] ||
+         { [ -f "$SS_SUDOERS_DST" ] &&
+           ! grep -q '/usr/local/libexec/ss-on-demand' "$SS_SUDOERS_DST"; }; then
+        echo "refusing to overwrite foreign sudoers rule: $SS_SUDOERS_DST" >&2
+        exit 1
+      fi
+
+      old_port=15900
+      if [ -f "$SS_ROOT_CONFIG" ]; then
+        configured_old_port="$(awk -F= '$1=="SCREEN_SHARING_PORT" {
+          gsub(/\047/, "", $2)
+          print $2
+          exit
+        }' "$SS_ROOT_CONFIG" 2>/dev/null || true)"
+        case "$configured_old_port" in
+          *[!0-9]*|"") ;;
+          *) old_port="$configured_old_port" ;;
+        esac
+      fi
+      old_target="$(/usr/bin/sudo -n -u "$INSTALL_USER" -- "$TAILSCALE_BIN" serve status --json 2>/dev/null |
+        /usr/bin/python3 -c '
+import json, sys
+port = sys.argv[1]
+try:
+    entry = (json.load(sys.stdin).get("TCP") or {}).get(port) or {}
+    print(entry.get("TCPForward") or "")
+except Exception:
+    pass
+' "$old_port" || true)"
+      if [ "$old_target" = "localhost:5900" ] || [ "$old_target" = "tcp://localhost:5900" ]; then
+        /usr/bin/sudo -n -u "$INSTALL_USER" -- "$TAILSCALE_BIN" \
+          serve --yes --tcp "$old_port" off >/dev/null 2>&1 || true
+      fi
+
+      # Retire only the exact legacy sleep-based lease process. A reused PID
+      # with any other command is left untouched.
+      if [ -f /tmp/ss-lease.pid ]; then
+        legacy_pid="$(cat /tmp/ss-lease.pid 2>/dev/null || true)"
+        case "$legacy_pid" in
+          *[!0-9]*|"") ;;
+          *)
+            legacy_command="$(ps -p "$legacy_pid" -o command= 2>/dev/null || true)"
+            if printf '%s' "$legacy_command" | grep -Eq 'sleep [0-9]+.*ss off'; then
+              kill "$legacy_pid" 2>/dev/null || true
+            fi
+            ;;
+        esac
+        rm -f /tmp/ss-lease.pid
+      fi
+      rm -f /tmp/ss-auto-off.log
+
+      install -d -o root -g wheel -m 0755 /usr/local/libexec
+      install -d -o root -g wheel -m 0755 /usr/local/etc/remote-agent-stack
+      install -d -o root -g wheel -m 0755 /var/db/remote-agent-stack
+      validate_privileged_dir /usr/local/libexec
+      validate_privileged_dir /usr/local/etc
+      validate_privileged_dir /usr/local/etc/remote-agent-stack
+      validate_privileged_dir /var/db/remote-agent-stack
+      install -o root -g wheel -m 0755 "$SS_ROOT_SRC" "$SS_ROOT_DST"
+
+      root_config_tmp="$(mktemp)"
+      printf "INSTALL_USER='%s'\nTAILSCALE_BIN='%s'\nSCREEN_SHARING_PORT='%s'\n" \
+        "$INSTALL_USER" "$TAILSCALE_BIN" "$SCREEN_SHARING_PORT" > "$root_config_tmp"
+      install -o root -g wheel -m 0644 "$root_config_tmp" "$SS_ROOT_CONFIG"
+      rm -f "$root_config_tmp"
+
+      install -o root -g wheel -m 0644 "$SS_EXPIRY_PLIST_SRC" "$SS_EXPIRY_PLIST_DST"
+
+      sudoers_tmp="$(mktemp)"
+      {
+        printf 'Defaults!%s secure_path=/usr/bin:/bin:/usr/sbin:/sbin\n' "$SS_ROOT_DST"
+        printf '%s ALL=(root) NOPASSWD:' "$INSTALL_USER"
+        separator=' '
+        for hours in 1 2 3 4 5 6 7 8; do
+          printf '%s%s on %s' "$separator" "$SS_ROOT_DST" "$hours"
+          separator=', '
+        done
+        printf ', %s off\n' "$SS_ROOT_DST"
+      } > "$sudoers_tmp"
+      chmod 0440 "$sudoers_tmp"
+      /usr/sbin/visudo -c -f "$sudoers_tmp" >/dev/null
+      install -o root -g wheel -m 0440 "$sudoers_tmp" "$SS_SUDOERS_DST"
+      rm -f "$sudoers_tmp"
+
+      launchctl bootout "system/$SS_EXPIRY_LABEL" 2>/dev/null || true
+      launchctl bootstrap system "$SS_EXPIRY_PLIST_DST"
     fi
     if [ "$NEED_SYMLINK" = "true" ]; then
       echo "  → symlinking $WRAPPER_DST"
@@ -361,6 +698,7 @@ PRIVILEGED_BLOCK
   $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_SHORT_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
   $NEED_SYMLINK            && [ -L "$SS_DST" ] && [ "$(readlink "$SS_DST")" = "$SS_SRC" ] && ok "$SS_DST -> $SS_SRC" || true
   $NEED_SYMLINK            && [ -L "$VNCFIX_DST" ] && [ "$(readlink "$VNCFIX_DST")" = "$VNCFIX_SRC" ] && ok "$VNCFIX_DST -> $VNCFIX_SRC" || true
+  $NEED_SCREEN_SHARING_INSTALL && ok "bounded Screen Sharing helper installed" || true
 else
   ok "nothing to do (system already configured)"
 fi
@@ -584,8 +922,64 @@ MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
 # new-session launch (copilot: --allow-all; claude: --dangerously-skip-permissions).
 # Personal-machine convenience; do NOT enable in shared environments.
 ALLOW_ALL="$ALLOW_ALL_RESOLVED"
+
+# Agent-to-owner help MCP. The recipient itself is stored separately in
+# agent-help/config.json (mode 0600), never in this regenerated wrapper file.
+AGENT_HELP_CLIS="${AGENT_HELP_CLIS_RESOLVED:-none}"
+SCREEN_SHARING_PORT="$SCREEN_SHARING_PORT_RESOLVED"
+DESK_DISPLAY_COUNT="$DESK_DISPLAY_COUNT_RESOLVED"
+SCREEN_SHARING_HOURS="$SCREEN_SHARING_HOURS_RESOLVED"
 EOF
 ok "wrote $CONFIG_DIR/config"
+
+# ---- shared agent-help MCP + selected CLI configuration -------------------
+
+bold "Agent help installation"
+
+mkdir -p "$MCP_DST"
+chmod 0700 "$CONFIG_DIR" "$CONFIG_DIR/agent-help" "$MCP_DST"
+for file in package.json package-lock.json core.mjs core.test.mjs server.mjs \
+  server.test.mjs configure.mjs send-imessage.applescript; do
+  install -m 0600 "$MCP_SRC/$file" "$MCP_DST/$file"
+done
+chmod 0700 "$MCP_DST/server.mjs" "$MCP_DST/configure.mjs"
+
+(
+  cd "$MCP_DST"
+  npm ci --omit=dev --ignore-scripts --quiet
+)
+ok "installed shared MCP server at $MCP_DST"
+
+if [ -n "$AGENT_HELP_RECIPIENT_RESOLVED" ]; then
+  REMOTE_AGENT_STACK_CONFIG_DIR="$CONFIG_DIR" \
+    node "$MCP_DST/configure.mjs" \
+      --recipient "$AGENT_HELP_RECIPIENT_RESOLVED" \
+      --desk-display-count "$DESK_DISPLAY_COUNT_RESOLVED" \
+      --screen-sharing-hours "$SCREEN_SHARING_HOURS_RESOLVED" \
+      --screen-sharing-port "$SCREEN_SHARING_PORT_RESOLVED" >/dev/null
+  ok "updated private recipient and presence configuration without printing it"
+fi
+
+node "$MANAGE_AGENT_HELP" \
+  --mode reconcile \
+  --clis "$AGENT_HELP_CLIS_RESOLVED" \
+  --node "$(command -v node)" \
+  --server "$MCP_SERVER"
+if [ -n "$AGENT_HELP_CLIS_RESOLVED" ]; then
+  ok "configured request_help for $AGENT_HELP_CLIS_RESOLVED"
+  todo "restart active CLI sessions so they load the new MCP server and instructions"
+else
+  ok "removed owned request_help entries and instructions from all CLIs"
+fi
+
+LEGACY_AGENT_HELP_SERVER="$HOME/.copilot/mcp-servers/agent-help"
+if [ -d "$LEGACY_AGENT_HELP_SERVER" ] ||
+   [ -f "$HOME/.copilot/agent-help.json" ] ||
+   [ -f "$HOME/.copilot/agent-help-state.json" ]; then
+  rm -rf "$LEGACY_AGENT_HELP_SERVER"
+  rm -f "$HOME/.copilot/agent-help.json" "$HOME/.copilot/agent-help-state.json"
+  ok "removed migrated Copilot-only agent-help files"
+fi
 
 # ---- tmux keychain bootstrap LaunchAgent ----------------------------------
 #
@@ -780,6 +1174,12 @@ else
   echo "    Install per https://docs.claude.com/en/docs/claude-code/quickstart"
 fi
 
+if have codex; then
+  ok "codex CLI found ($(codex --version 2>&1 | head -1))"
+else
+  warn "codex CLI not found in PATH — it cannot be selected for request_help until installed."
+fi
+
 # ---- manual steps ---------------------------------------------------------
 #
 # FDA paths must be the REAL binary (the Cellar path), not the symlink
@@ -839,6 +1239,12 @@ cat <<MANUAL
   4. Test:
        ca alpha    # copilot backend, cwd \$COPILOT_WORKSPACE_BASE/agent-alpha
        cc alpha    # claude  backend, cwd \$CLAUDE_WORKSPACE_BASE/agent-alpha
+       ss on 1     # prints a clickable Screens URL; no password prompt
+
+     Restart each CLI selected for agent help, then ask it to list MCP
+     tools. It should expose \`request_help\`. The first real send may
+     trigger a macOS Automation prompt allowing the terminal host to
+     control Messages; approve it on the Mac.
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
        ca alpha    # or: cc alpha

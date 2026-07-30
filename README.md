@@ -52,6 +52,11 @@ section you need from the table of contents.
 - A one-shot installer for OS-level prerequisites: Homebrew, `tmux`,
   Tailscale (CLI build), and the MagicDNS resolver fix that Homebrew's
   Tailscale formula leaves out.
+- An optional `request_help` MCP tool for Copilot CLI, Claude Code,
+  and Codex CLI. A blocked agent can send one bounded iMessage. If
+  the configured desk monitors are not online, the tool opens
+  temporary Screen Sharing and includes a clickable `screens://`
+  link using the Mac's actual Tailscale name.
 - A symmetric uninstaller.
 
 ## How many agents?
@@ -143,6 +148,12 @@ The installer is idempotent — safe to re-run. It:
 
 - Installs Homebrew (if missing), `tmux`, and the Tailscale CLI build.
 - Writes `/etc/resolver/ts.net` (the MagicDNS resolver fix).
+- Detects Copilot CLI, Claude Code, and Codex CLI, then asks which
+  should receive the optional `request_help` tool.
+- Installs a root-owned Screen Sharing helper whose passwordless
+  commands are limited to `on` for one through eight hours and
+  `off`. A launchd watchdog enforces the deadline after logout,
+  sleep, or reboot.
 - Symlinks four names into `/usr/local/bin` — `copilot-agent`,
   `ca`, `claude-agent`, `cc` — all pointing at the same multi-call
   wrapper (`bin/agent`).
@@ -262,6 +273,26 @@ Install whichever backend CLI(s) you plan to use:
 
 You can install one, the other, or both. The wrapper enforces the
 presence of the backend binary in PATH only at launch time.
+
+- **Codex CLI** can use `request_help` even though it is not yet a
+  named-session backend of `bin/agent`. Install Codex normally, then
+  select `codex` when the installer asks which CLIs to configure.
+
+The help-tool selection can also be supplied noninteractively:
+
+```bash
+AGENT_HELP_RECIPIENT='you@example.com' ./install.sh \
+  --agent-help-clis copilot,claude,codex \
+  --screen-sharing-port 15900 \
+  --desk-display-count 3 \
+  --screen-sharing-hours 1
+```
+
+The recipient is stored only in
+`~/.config/remote-agent-stack/agent-help/config.json` with mode
+`0600`. Prefer the hidden interactive prompt or the temporary
+`AGENT_HELP_RECIPIENT` environment variable over a command-line flag
+so the value does not enter shell history.
 
 ### 1.8 — Workspace locations
 
@@ -556,9 +587,16 @@ Once everything is set up:
 - **Reattach from anywhere**: `ca alpha` on the Mac, or tap `Agent
   alpha` in iOS Termius. Same session.
 - **GUI access** (graphical desktop, not just the terminal): `ss on`
-  enables Screen Sharing for an hour and forwards it over the tailnet;
-  connect with the Screens app. See
+  enables Screen Sharing for an hour and forwards it over the tailnet.
+  It no longer asks for a password because the installer grants only
+  the exact bounded helper commands. Connect using the printed
+  `screens://<tailscale-name>:<port>` link. See
   [`docs/screen-sharing.md`](docs/screen-sharing.md).
+- **Agent needs you**: the selected CLIs expose `request_help`.
+  Their managed global instructions tell agents to call it once when
+  blocked on your login, permission, or decision. If fewer than
+  `DESK_DISPLAY_COUNT` displays are online, the same request opens
+  Screen Sharing for `SCREEN_SHARING_HOURS`.
 
 `tmux` sessions live in memory — they don't survive a Mac reboot. The
 wrapper relaunches Copilot CLI with the same `--session-id=<uuid>` on
@@ -576,6 +614,10 @@ COPILOT_WORKSPACE_BASE="/Users/you/.../Dropbox/copilot-workspace"  # set during 
 CLAUDE_WORKSPACE_BASE="/Users/you/.../Dropbox/claude-workspace"    # set during install
 MAILBOX_INTEGRATION="false"                                        # off by default
 ALLOW_ALL="false"                                                  # off by default
+AGENT_HELP_CLIS="copilot,claude,codex"                             # complete desired set
+SCREEN_SHARING_PORT="15900"                                        # Tailscale TCP forward
+DESK_DISPLAY_COUNT="3"                                             # displays online at the desk
+SCREEN_SHARING_HOURS="1"                                           # automatic bounded lease
 # COPILOT_BIN="copilot"
 # CLAUDE_BIN="claude"
 # AGENT_DIR_PREFIX="agent-"
@@ -619,8 +661,21 @@ run without prompting.
 `COPILOT_BIN` / `CLAUDE_BIN` let you point the wrapper at a specific
 backend binary (e.g., `/opt/homebrew/bin/copilot` or a nightly build).
 
-Additional agent backends (Codex CLI, etc.) are on the roadmap — see
-[Status](#status--roadmap).
+`AGENT_HELP_CLIS` is the complete managed set. Re-run the installer
+with `--agent-help-clis none` or a smaller list to remove only this
+repository's MCP entries and instruction blocks from deselected CLIs.
+Existing unrelated CLI configuration and instruction text are
+preserved.
+
+The installer writes the same managed help guidance to:
+
+- Copilot CLI: `~/.copilot/copilot-instructions.md`
+- Claude Code: `~/.claude/CLAUDE.md`
+- Codex CLI: `~/.codex/AGENTS.md`
+
+Active CLI sessions must be restarted after changing MCP selection.
+Additional named-session backends, including Codex CLI, remain on the
+roadmap. See [Status](#status--roadmap).
 
 ### tmux keychain bootstrap LaunchAgent
 
@@ -671,8 +726,8 @@ rm ~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist
 ## Uninstall
 
 ```bash
-~/code/remote-agent-stack/uninstall.sh           # wrapper + resolver
-~/code/remote-agent-stack/uninstall.sh --purge   # also drops config dir
+~/code/remote-agent-stack/uninstall.sh           # wrappers, MCP entries, instructions, remote access
+~/code/remote-agent-stack/uninstall.sh --purge   # also drops private recipient/state config
 ```
 
 Homebrew packages, FDA grants, and Tailscale network state are left in
