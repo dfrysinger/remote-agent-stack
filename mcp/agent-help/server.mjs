@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -11,24 +14,32 @@ import {
 import {
   agentHelpPaths,
   buildMessage,
-  countOnlineDisplays,
   normalizeAgentName,
   readConfig,
   reserveSend,
-  shouldEnableRemoteAccess,
   withOperationLock,
 } from "./core.mjs";
 
 const SCRIPT_PATH = fileURLToPath(
   new URL("./send-imessage.applescript", import.meta.url),
 );
-const SCREEN_SHARING_COMMAND =
-  process.env.AGENT_HELP_SS_COMMAND ?? "/usr/local/bin/ss";
+const INSTALLED_SCREEN_SHARING_COMMAND = "/usr/local/bin/ss";
+const LEGACY_SCREEN_SHARING_COMMAND = join(homedir(), "bin", "ss");
+const SCREEN_SHARING_COMMAND = process.env.AGENT_HELP_SS_COMMAND ??
+  (existsSync(INSTALLED_SCREEN_SHARING_COMMAND)
+    ? INSTALLED_SCREEN_SHARING_COMMAND
+    : LEGACY_SCREEN_SHARING_COMMAND);
+const SCREEN_SHARING_TIMEOUT =
+  SCREEN_SHARING_COMMAND === LEGACY_SCREEN_SHARING_COMMAND ? 90_000 : 30_000;
 const TMUX_COMMAND = process.env.AGENT_HELP_TMUX_COMMAND ?? "/opt/homebrew/bin/tmux";
-const SYSTEM_PROFILER_COMMAND =
-  process.env.AGENT_HELP_SYSTEM_PROFILER_COMMAND ?? "/usr/sbin/system_profiler";
 const OSASCRIPT_COMMAND =
   process.env.AGENT_HELP_OSASCRIPT_COMMAND ?? "/usr/bin/osascript";
+const NATO_AGENT_NAMES = new Set([
+  "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+  "india", "juliett", "kilo", "lima", "mike", "november", "oscar", "papa",
+  "quebec", "romeo", "sierra", "tango", "uniform", "victor", "whiskey",
+  "x-ray", "yankee", "zulu",
+]);
 
 function run(command, args, timeout) {
   return spawnSync(command, args, {
@@ -42,18 +53,27 @@ function run(command, args, timeout) {
 }
 
 function currentAgentName() {
-  if (!process.env.TMUX) return "CLI agent";
+  if (!process.env.TMUX) {
+    throw new Error("request_help requires a NATO-named tmux agent session");
+  }
   const result = run(
     TMUX_COMMAND,
     ["display-message", "-p", "#{session_name}"],
     2_000,
   );
-  if (result.status !== 0) return "CLI agent";
-  try {
-    return normalizeAgentName(result.stdout.trim());
-  } catch {
-    return "CLI agent";
+  if (result.status !== 0) {
+    throw new Error("request_help could not identify the tmux agent session");
   }
+  try {
+    const sessionName = normalizeAgentName(result.stdout.trim()).toLowerCase();
+    const name = sessionName.startsWith("claude-")
+      ? sessionName.slice("claude-".length)
+      : sessionName;
+    if (NATO_AGENT_NAMES.has(name)) return name;
+  } catch {
+    // Normalize all invalid session-name failures below.
+  }
+  throw new Error("request_help requires a NATO-named tmux agent session");
 }
 
 function sendMessage(recipient, message) {
@@ -71,37 +91,34 @@ function sendMessage(recipient, message) {
   }
 }
 
-function onlineDisplayCount() {
-  const result = run(
-    SYSTEM_PROFILER_COMMAND,
-    ["SPDisplaysDataType", "-json"],
-    15_000,
-  );
-  if (result.status !== 0) return null;
-  try {
-    return countOnlineDisplays(JSON.parse(result.stdout));
-  } catch {
-    return null;
-  }
-}
-
 function enableScreenSharing(hours) {
   const result = run(
     SCREEN_SHARING_COMMAND,
     ["on", String(hours), "--json"],
-    30_000,
+    SCREEN_SHARING_TIMEOUT,
   );
   if (result.status !== 0) return null;
   try {
     const parsed = JSON.parse(result.stdout);
-    return parsed?.enabled === true &&
+    if (
+      parsed?.enabled === true &&
       typeof parsed.url === "string" &&
       /^screens:\/\/[A-Za-z0-9.-]+:[1-9][0-9]{0,4}$/.test(parsed.url)
-      ? { createdLease: parsed.createdLease === true, url: parsed.url }
-      : null;
+    ) {
+      return { createdLease: parsed.createdLease === true, url: parsed.url };
+    }
   } catch {
-    return null;
+    const legacy = result.stdout.match(
+      /Connect with Screens to:\s+([A-Za-z0-9.-]+)\s+port\s+([1-9][0-9]{0,4})/,
+    );
+    if (legacy) {
+      return {
+        createdLease: false,
+        url: `screens://${legacy[1]}:${legacy[2]}`,
+      };
+    }
   }
+  return null;
 }
 
 function disableScreenSharing() {
@@ -139,12 +156,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description:
               "Optional short label such as Stafftools or release approval. No URLs, domains, credentials, errors, repository content, or personal data.",
           },
-          agent_name: {
-            type: "string",
-            maxLength: 40,
-            description:
-              "Optional agent name. The current tmux session name is used when omitted.",
-          },
         },
         required: ["reason"],
       },
@@ -158,7 +169,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   return withOperationLock(async () => {
     const args = request.params.arguments ?? {};
-    const agentName = args.agent_name ?? currentAgentName();
+    const agentName = currentAgentName();
     const baseMessage = buildMessage({
       agentName,
       reason: args.reason,
@@ -180,30 +191,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     const config = readConfig(paths.config);
-    const displayCount = onlineDisplayCount();
-    let remote = null;
-    if (shouldEnableRemoteAccess(displayCount, config.deskDisplayCount)) {
-      remote = enableScreenSharing(config.screenSharingHours);
+    const remote = enableScreenSharing(config.screenSharingHours);
+    if (!remote) {
+      throw new Error(
+        "Temporary Screen Sharing could not be enabled; no help message was sent.",
+      );
     }
 
     const message = buildMessage({
       agentName,
       reason: args.reason,
       context: args.context,
-      remoteAccessUrl: remote?.url,
+      remoteAccessUrl: remote.url,
     });
     try {
       sendMessage(config.recipient, message);
     } catch (error) {
-      if (remote?.createdLease) disableScreenSharing();
+      if (remote.createdLease) disableScreenSharing();
       throw error;
     }
     return {
       content: [{
         type: "text",
-        text: remote
-          ? "The local Messages app accepted the help request, and temporary Screen Sharing is available."
-          : "The local Messages app accepted the help request.",
+        text:
+          "The local Messages app accepted the help request, and temporary Screen Sharing is available.",
       }],
     };
   });

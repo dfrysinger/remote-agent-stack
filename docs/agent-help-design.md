@@ -4,9 +4,9 @@
 
 Let a local Copilot CLI, Claude Code, or Codex CLI agent send one bounded
 iMessage when it needs the Mac owner's login, permission, decision, or other
-human action. When the owner appears away, temporarily expose macOS Screen
-Sharing over Tailscale and include a clickable Screens URL derived from the
-machine's actual Tailscale hostname and configured port.
+human action. Temporarily expose macOS Screen Sharing over Tailscale and include
+a clickable Screens URL derived from the machine's actual Tailscale hostname
+and configured port.
 
 ## Non-goals
 
@@ -123,35 +123,33 @@ invalid Tailscale DNS name omits remote-access advertising.
 ## MCP behavior and failure model
 
 - The only tool is `request_help`.
-- Inputs are a fixed reason enum, an optional 80-character context label, and
-  an optional 40-character agent name. Both free-text fields use a strict ASCII
+- Inputs are a fixed reason enum and an optional 80-character context label.
+  The agent identity comes only from the NATO-alphabet tmux session name and
+  cannot be supplied by the caller. The free-text context uses a strict ASCII
   label allowlist and reject URL schemes, domain-shaped tokens, control
   characters, and common credential prefixes. This materially limits the
   channel but cannot prove semantic absence of every possible secret; the
   managed instructions remain part of that policy.
-- The current tmux session supplies the agent name when available. Each CLI
-  otherwise gets a platform-specific fallback name.
+- The current tmux session must resolve to a NATO agent name. The known
+  `claude-` backend prefix is removed before the name is reported. Missing,
+  invalid, or non-NATO sessions are rejected before any side effect.
 - Identical messages deduplicate for ten minutes; at most three sends are
   reserved per hour. All MCP processes share an exclusive lock covering
   the complete reservation, presence check, enablement, send, and compensation
   transaction. State writes are atomic. Corrupt state fails closed. A failed
   send consumes its reservation to prevent retry storms.
-- Presence uses the online display count from
-  `system_profiler SPDisplaysDataType -json`. Fewer displays than the
-  configured desk count means the owner appears away only when at least one
-  online display was positively observed. Zero displays is unknown.
-- Unknown display state fails closed: the message may be sent, but Screen
-  Sharing is not enabled.
+- Every accepted request opens a bounded Screen Sharing lease so the message
+  always includes an actionable Screens link.
 - Deduplicated or rate-limited requests perform neither message nor
   Screen Sharing side effects.
-- Screen Sharing enablement failure omits the Screens URL and does not prevent
-  the bounded help message. If Messages then rejects a message that advertised
-  remote access, the server invokes `ss off` only when this request created the
-  lease. If a prior managed/manual lease was already active, it leaves that
-  lease to its root-enforced deadline.
-- Every external command has a bounded timeout. Presence and enablement
-  timeouts degrade to no remote access; the Messages timeout is reported as a
-  failed tool call.
+- Screen Sharing enablement or URL-validation failure prevents the message from
+  being sent and consumes the reservation so repeated helper failures remain
+  rate-limited. If Messages rejects a message after access was enabled, the
+  server invokes `ss off` only when this request created the lease. If a prior
+  managed/manual lease was already active, it leaves that lease to its
+  root-enforced deadline.
+- Every external command has a bounded timeout. Enablement and Messages
+  timeouts are reported as failed tool calls.
 - Messages are sent through a fixed two-argument AppleScript. Agents cannot
   select the recipient, transport, command, or remote-access URL.
 - A successful result means the local Messages app accepted the send. It does
@@ -163,7 +161,7 @@ invalid Tailscale DNS name omits remote-access advertising.
    mode `0700`.
 2. The agent cannot provide a URL, recipient, shell command, or arbitrary
    message body.
-3. Unknown presence never opens Screen Sharing.
+3. Agent identity is derived from the tmux session and cannot be overridden.
 4. Every helper-enabled Screen Sharing session has a root-enforced absolute
    lease of one to eight hours; direct invocation cannot bypass the deadline.
 5. Passwordless sudo permits only the exact root helper `on` and `off`
@@ -180,13 +178,13 @@ invalid Tailscale DNS name omits remote-access advertising.
 ## Deterministic checks
 
 - Core tests cover input sanitization including scheme-less domains and common
-  credential prefixes, message construction, positive/zero/unknown display
-  presence, dynamic Screens URLs, private configuration, corrupt-state
-  failure, deduplication, concurrent rate limits, and send-failure semantics.
-- Server tests use injected command runners to prove unknown display state
-  stays closed, remote access is advertised only after `ss on` succeeds, a
-  failed send tears down only a newly created lease, and a daemon tick before
-  the expiry leaves the lease active.
+  credential prefixes, message construction, dynamic Screens URLs, private
+  configuration, corrupt-state failure, deduplication, concurrent rate limits,
+  and send-failure semantics.
+- Server tests use injected command runners to prove the tmux identity cannot
+  be replaced by caller input, remote access is advertised only after `ss on`
+  succeeds, a failed send tears down only a newly created lease, and a daemon
+  tick before the expiry leaves the lease active.
 - Shell tests exercise CLI-list parsing and desired-set transitions, malformed
   managed-block refusal, ownership/scope recognition including legacy
   migration, legacy `/tmp` cleanup with PID-reuse refusal, port

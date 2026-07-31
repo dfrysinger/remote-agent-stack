@@ -53,10 +53,9 @@ section you need from the table of contents.
   Tailscale (CLI build), and the MagicDNS resolver fix that Homebrew's
   Tailscale formula leaves out.
 - An optional `request_help` MCP tool for Copilot CLI, Claude Code,
-  and Codex CLI. A blocked agent can send one bounded iMessage. If
-  the configured desk monitors are not online, the tool opens
-  temporary Screen Sharing and includes a clickable `screens://`
-  link using the Mac's actual Tailscale name.
+  and Codex CLI. A blocked agent can send one bounded iMessage identified by
+  its NATO-alphabet tmux session. The tool opens temporary Screen Sharing and
+  includes a clickable `screens://` link using the Mac's actual Tailscale name.
 - A symmetric uninstaller.
 
 ## How many agents?
@@ -285,7 +284,6 @@ AGENT_HELP_RECIPIENT='you@example.com' ./install.sh \
   --agent-help-clis copilot,claude,codex \
   --skills-clis copilot,claude,codex \
   --screen-sharing-port 15900 \
-  --desk-display-count 3 \
   --screen-sharing-hours 1
 ```
 
@@ -610,9 +608,9 @@ Once everything is set up:
   [`docs/screen-sharing.md`](docs/screen-sharing.md).
 - **Agent needs you**: the selected CLIs expose `request_help`.
   Their managed global instructions tell agents to call it once when
-  blocked on your login, permission, or decision. If fewer than
-  `DESK_DISPLAY_COUNT` displays are online, the same request opens
-  Screen Sharing for `SCREEN_SHARING_HOURS`.
+  blocked on your login, permission, or decision. The request opens
+  Screen Sharing for `SCREEN_SHARING_HOURS` and identifies the originating
+  NATO-alphabet tmux session.
 
 `tmux` sessions live in memory — they don't survive a Mac reboot. The
 wrapper relaunches Copilot CLI with the same `--session-id=<uuid>` on
@@ -632,7 +630,7 @@ MAILBOX_INTEGRATION="false"                                        # off by defa
 ALLOW_ALL="false"                                                  # off by default
 AGENT_HELP_CLIS="copilot,claude,codex"                             # complete desired set
 SCREEN_SHARING_PORT="15900"                                        # Tailscale TCP forward
-DESK_DISPLAY_COUNT="3"                                             # displays online at the desk
+DESK_DISPLAY_COUNT="3"                                             # legacy compatibility setting
 SCREEN_SHARING_HOURS="1"                                           # automatic bounded lease
 # COPILOT_BIN="copilot"
 # CLAUDE_BIN="claude"

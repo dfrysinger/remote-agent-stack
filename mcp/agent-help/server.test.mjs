@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +22,13 @@ function executable(path, body) {
 }
 
 async function withServer(
-  { displays = 1, createdLease = true, sendFails = false, tmuxName = null },
+  {
+    createdLease = true,
+    legacyScreenSharingOutput = false,
+    screenSharingFails = false,
+    sendFails = false,
+    tmuxName = "hotel",
+  },
   callback,
 ) {
   const directory = mkdtempSync(join(tmpdir(), "agent-help-server-"));
@@ -31,23 +43,20 @@ async function withServer(
     },
     join(configRoot, "agent-help", "config.json"),
   );
-  const profiler = join(directory, "system-profiler");
   const ss = join(directory, "ss");
   const osascript = join(directory, "osascript");
   const tmux = join(directory, "tmux");
   const body = join(directory, "message-body");
   executable(
-    profiler,
-    `printf '%s\\n' '{"SPDisplaysDataType":[{"spdisplays_ndrvs":[${Array.from(
-      { length: displays },
-      () => '{"spdisplays_online":"spdisplays_yes"}',
-    ).join(",")}]}]}'`,
-  );
-  executable(
     ss,
     `printf 'ss %s\\n' "$*" >> ${JSON.stringify(log)}
 if [ "\${1:-}" = on ]; then
-  printf '%s\\n' '{"enabled":true,"createdLease":${createdLease},"url":"screens://test-mac.example.ts.net:15900"}'
+  ${screenSharingFails ? "exit 1" : ""}
+  ${
+    legacyScreenSharingOutput
+      ? "printf '%s\\n' 'Connect with Screens to:  test-mac.example.ts.net  port 15900'"
+      : `printf '%s\\n' '{"enabled":true,"createdLease":${createdLease},"url":"screens://test-mac.example.ts.net:15900"}'`
+  }
 else
   printf '%s\\n' '{"enabled":false}'
 fi`,
@@ -68,7 +77,6 @@ ${sendFails ? "exit 1" : "exit 0"}`,
     env: {
       ...process.env,
       REMOTE_AGENT_STACK_CONFIG_DIR: configRoot,
-      AGENT_HELP_SYSTEM_PROFILER_COMMAND: profiler,
       AGENT_HELP_SS_COMMAND: ss,
       AGENT_HELP_OSASCRIPT_COMMAND: osascript,
       ...(tmuxName === null
@@ -80,7 +88,7 @@ ${sendFails ? "exit 1" : "exit 0"}`,
   const client = new Client({ name: "agent-help-test", version: "1.0.0" });
   await client.connect(transport);
   try {
-    await callback({ client, log, body });
+    await callback({ client, configRoot, log, body });
   } finally {
     await client.close();
   }
@@ -90,6 +98,10 @@ test("lists request_help and advertises remote access after successful enablemen
   await withServer({}, async ({ client, log }) => {
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name), ["request_help"]);
+    assert.equal(
+      Object.hasOwn(tools.tools[0].inputSchema.properties, "agent_name"),
+      false,
+    );
     const result = await client.callTool({
       name: "request_help",
       arguments: { reason: "login_required", context: "Stafftools" },
@@ -136,26 +148,82 @@ test("failed send tears down only a lease created by that request", async () => 
   );
 });
 
-test("zero displays sends help without opening Screen Sharing", async () => {
-  await withServer({ displays: 0 }, async ({ client, log }) => {
-    const result = await client.callTool({
+test("uses the tmux NATO name and exposes no caller-supplied identity", async () => {
+  await withServer({ tmuxName: "lima" }, async ({ client, body }) => {
+    await client.callTool({
       name: "request_help",
-      arguments: { reason: "decision_required", context: "Release approval" },
+      arguments: {
+        reason: "decision_required",
+        context: "Concurrent Phase 5 worktree edits",
+      },
     });
-    assert.equal(
-      result.content[0].text,
-      "The local Messages app accepted the help request.",
+    assert.match(readFileSync(body, "utf8"), /^Agent lima:/);
+    assert.match(
+      readFileSync(body, "utf8"),
+      /screens:\/\/test-mac\.example\.ts\.net:15900$/,
     );
-    assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), ["message"]);
   });
 });
 
-test("unsupported tmux session characters fall back without blocking help", async () => {
-  await withServer({ displays: 3, tmuxName: "agent+1" }, async ({ client, body }) => {
+test("normalizes Claude tmux prefixes to the NATO agent name", async () => {
+  await withServer({ tmuxName: "claude-lima" }, async ({ client, body }) => {
     await client.callTool({
       name: "request_help",
       arguments: { reason: "blocked", context: "Approval" },
     });
-    assert.match(readFileSync(body, "utf8"), /^Agent CLI agent:/);
+    assert.match(readFileSync(body, "utf8"), /^Agent lima:/);
   });
+});
+
+test("supports the legacy Screen Sharing helper output during migration", async () => {
+  await withServer(
+    { legacyScreenSharingOutput: true },
+    async ({ client, body }) => {
+      await client.callTool({
+        name: "request_help",
+        arguments: { reason: "blocked", context: "Approval" },
+      });
+      assert.match(
+        readFileSync(body, "utf8"),
+        /screens:\/\/test-mac\.example\.ts\.net:15900$/,
+      );
+    },
+  );
+});
+
+test("rejects non-NATO tmux sessions before sending", async () => {
+  await withServer({ tmuxName: "agent+1" }, async ({ client, log, body }) => {
+    await assert.rejects(() =>
+      client.callTool({
+        name: "request_help",
+        arguments: { reason: "blocked", context: "Approval" },
+      }),
+    );
+    assert.equal(existsSync(log), false);
+    assert.equal(existsSync(body), false);
+  });
+});
+
+test("does not send a linkless message when Screen Sharing fails", async () => {
+  await withServer(
+    { screenSharingFails: true },
+    async ({ client, configRoot, log, body }) => {
+      await assert.rejects(() =>
+        client.callTool({
+          name: "request_help",
+          arguments: { reason: "blocked", context: "Approval" },
+        }),
+      );
+      assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
+        "ss on 1 --json",
+      ]);
+      assert.equal(existsSync(body), false);
+      assert.equal(
+        JSON.parse(
+          readFileSync(join(configRoot, "agent-help", "state.json"), "utf8"),
+        ).sends.length,
+        1,
+      );
+    },
+  );
 });

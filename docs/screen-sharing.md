@@ -83,11 +83,10 @@ When an agent is blocked on a login, permission, or decision:
 1. The server validates a fixed reason and a short label.
 2. It sends at most three messages per hour and deduplicates an
    identical request for ten minutes.
-3. It counts online displays. A positive count below
-   `DESK_DISPLAY_COUNT` means the owner appears away. Zero or unknown
-   displays do not open remote access.
-4. Away mode runs `ss on SCREEN_SHARING_HOURS` and adds the
-   server-derived Screens URL to the iMessage.
+3. It derives the originating agent from the NATO-alphabet tmux session name;
+   callers cannot replace that identity with a project or phase label.
+4. It runs `ss on SCREEN_SHARING_HOURS` and adds the server-derived Screens
+   URL to the iMessage.
 
 The server cannot read Messages, choose a recipient, accept an
 agent-provided URL, or run message content. The private recipient and
