@@ -89,13 +89,13 @@ test("detects only positively observed away displays", () => {
   assert.equal(shouldEnableRemoteAccess(null, 3), false);
 });
 
-test("derives Screens URL from Self.DNSName and configured port", () => {
+test("derives Screens URL from the Self.DNSName short name and configured port", () => {
   assert.equal(
     screensUrl(
       { Self: { DNSName: "agent-mac.example.ts.net." } },
       15900,
     ),
-    "screens://agent-mac.example.ts.net:15900",
+    "screens://agent-mac:15900",
   );
   assert.equal(screensUrl({ Self: { DNSName: "" } }, 15900), null);
   assert.equal(screensUrl({ Peer: { DNSName: "peer.ts.net." } }, 15900), null);

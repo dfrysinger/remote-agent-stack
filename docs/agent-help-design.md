@@ -115,10 +115,10 @@ user-owned Homebrew binary remains confined to that user.
 The configured Tailscale serve port defaults to `15900`, must be in
 `1..65535`, and is stamped into both root and user configuration by the
 installer. Changing it through a rerun first tears down the prior owned
-mapping. The Screens URL is calculated at request time by parsing
-`Self.DNSName` from `tailscale status --json`; no hostname is hard-coded and no
-local hostname substitutes for a missing Tailscale identity. A missing or
-invalid Tailscale DNS name omits remote-access advertising.
+mapping. The Screens URL is calculated at request time from the short hostname
+(the first label of `Self.DNSName`) in `tailscale status --json`; no hostname is
+hard-coded and no local hostname substitutes for a missing Tailscale identity.
+A missing or invalid Tailscale DNS name omits remote-access advertising.
 
 ## MCP behavior and failure model
 

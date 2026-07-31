@@ -58,7 +58,7 @@ assert data == {
   "createdLease": True,
   "expiryEpoch": 4102444800,
   "port": 16666,
-  "url": "screens://test-mac.example.ts.net:16666",
+  "url": "screens://test-mac:16666",
 }
 ' "$RESULT"
 

@@ -79,7 +79,7 @@ import json, re, sys
 value = ((json.load(sys.stdin).get("Self") or {}).get("DNSName") or "").rstrip(".")
 if not re.fullmatch(r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", value):
     raise SystemExit(1)
-print(value)
+print(value.split(".", 1)[0])
 '
 }
 

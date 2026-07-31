@@ -55,7 +55,7 @@ if [ "\${1:-}" = on ]; then
   ${
     legacyScreenSharingOutput
       ? "printf '%s\\n' 'Connect with Screens to:  test-mac.example.ts.net  port 15900'"
-      : `printf '%s\\n' '{"enabled":true,"createdLease":${createdLease},"url":"screens://test-mac.example.ts.net:15900"}'`
+      : `printf '%s\\n' '{"enabled":true,"createdLease":${createdLease},"url":"screens://test-mac:15900"}'`
   }
 else
   printf '%s\\n' '{"enabled":false}'
@@ -160,7 +160,7 @@ test("uses the tmux NATO name and exposes no caller-supplied identity", async ()
     assert.match(readFileSync(body, "utf8"), /^Agent lima:/);
     assert.match(
       readFileSync(body, "utf8"),
-      /screens:\/\/test-mac\.example\.ts\.net:15900$/,
+      /screens:\/\/test-mac:15900$/,
     );
   });
 });
