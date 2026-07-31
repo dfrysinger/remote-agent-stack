@@ -133,17 +133,17 @@ export function shouldEnableRemoteAccess(displayCount, deskDisplayCount) {
 export function tailscaleHostname(status) {
   const raw = status?.Self?.DNSName;
   if (typeof raw !== "string") return null;
-  const hostname = raw.trim().replace(/\.$/, "");
+  const dnsName = raw.trim().replace(/\.$/, "");
   if (
-    hostname.length === 0 ||
-    hostname.length > 253 ||
+    dnsName.length === 0 ||
+    dnsName.length > 253 ||
     !/^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(
-      hostname,
+      dnsName,
     )
   ) {
     return null;
   }
-  return hostname;
+  return dnsName.split(".", 1)[0];
 }
 
 export function screensUrl(status, port) {

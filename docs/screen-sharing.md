@@ -56,11 +56,11 @@ eight hours and does not prompt for a password after installation.
 
 ### Connect from Screens
 
-`ss on` prints a clickable URL using `Self.DNSName` from
-`tailscale status --json` and the configured port:
+`ss on` prints a clickable URL using the short hostname derived from
+`Self.DNSName` in `tailscale status --json` and the configured port:
 
 ```
-screens://macbook-air.example.ts.net:15900
+screens://macbook-air:15900
 ```
 
 The command refuses to open access if it cannot resolve the current
