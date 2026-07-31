@@ -27,7 +27,8 @@ action and they may not be at the Mac, call the user-level \`agent-help\` MCP
 tool \`request_help\` once for that blocker. Include only a short, non-secret
 context label. Never include URLs, domains, credentials, repository content,
 raw errors, or personal data. Continue independent work when possible and do
-not repeatedly notify for the same blocker.
+not repeatedly notify for the same blocker. The tool identifies the agent from
+its NATO-alphabet tmux session name and opens a bounded Screens link.
 ${BLOCK_END}`;
 
 function atomicWrite(path, content, mode = 0o600) {

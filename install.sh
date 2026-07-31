@@ -48,8 +48,6 @@ Options:
                                  interactive no-echo prompt or
                                  AGENT_HELP_RECIPIENT to avoid shell history.
   --screen-sharing-port PORT     Tailscale Serve TCP port (default: 15900).
-  --desk-display-count COUNT     Online display count when the owner is at the
-                                 desk (default: 3).
   --screen-sharing-hours HOURS   Automatic access lease, 1-8 (default: 1).
 
   If either workspace flag is omitted, the installer auto-detects
