@@ -283,6 +283,7 @@ The help-tool selection can also be supplied noninteractively:
 AGENT_HELP_RECIPIENT='you@example.com' ./install.sh \
   --agent-help-clis copilot,claude,codex \
   --skills-clis copilot,claude,codex \
+  --dreaming \
   --screen-sharing-port 15900 \
   --screen-sharing-hours 1
 ```
@@ -307,6 +308,24 @@ marketplaces created by this installer. Pre-existing installations are
 preserved. Ownership state lives under
 `${XDG_STATE_HOME:-~/.local/state}/remote-agent-stack/`, outside the
 purgeable recipient and wrapper configuration.
+
+The installer can also install
+[`dfrysinger/dreaming`](https://github.com/dfrysinger/dreaming) as a
+Copilot-only, headless learning and skill-curation service:
+
+```bash
+./install.sh --dreaming
+```
+
+Dreaming is independent of `--skills-clis`. Its dedicated runtime checkout
+defaults to `~/.local/share/remote-agent-stack/dreaming`, so a separate
+development checkout can remain on another branch or contain local edits.
+Installation delegates to Dreaming's own install, self-test, and enable
+lifecycle. The stack sets
+`DREAMING_SKIP_PLUGIN_SYNC=1`, so Dreaming's five private orchestration skills
+do not appear in normal interactive CLI context. `--no-dreaming` removes only a
+runtime adopted by this installer and preserves the checkout and recovery
+state.
 
 ### 1.8 — Workspace locations
 
@@ -685,6 +704,12 @@ preserved.
 `dfrysinger-skills` plugin. Reruns update installations created by this
 installer. Deselecting a CLI removes only owned plugin and marketplace
 registrations; same-named user-managed installations are left untouched.
+
+`DREAMING_ENABLED` independently controls the headless Dreaming service.
+`DREAMING_REPO_ROOT` records its source checkout. Reruns fast-forward only an
+exact, clean `dfrysinger/dreaming` checkout on `main`; a dirty checkout,
+different branch, or foreign origin fails closed. The lifecycle journal lives
+under `${XDG_STATE_HOME:-~/.local/state}/remote-agent-stack/`.
 
 The help guidance lives in the `request_help` tool description, which is in
 context for any CLI where the tool is registered. The installer no longer adds
