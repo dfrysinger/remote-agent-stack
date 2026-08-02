@@ -27,6 +27,7 @@ function fixture() {
     head: "upstream",
     upstream: "upstream",
     localSkillsRemote: false,
+    runtimePresent: false,
     lifecycleCalls: [],
     failLifecycle: null,
     calls: [],
@@ -86,6 +87,8 @@ function fixture() {
         if (allowFailure) return { status: 1, stdout: "", stderr: "injected failure" };
         throw new Error(`${operation} failed`);
       }
+      if (operation === "install") model.runtimePresent = true;
+      if (operation === "uninstall") model.runtimePresent = false;
       return result();
     }
     return result();
@@ -156,6 +159,43 @@ test("failed self-test never enables and remains recoverable", () => {
     ["install", "selftest", "uninstall"],
   );
   assert.equal(existsSync(context.statePath), false);
+});
+
+test("retry after a partial install rechecks runtime ownership", () => {
+  const context = fixture();
+  const inspectRuntime = () => ({
+    present: context.model.runtimePresent,
+    selftestCount: context.model.runtimePresent ? 1 : 0,
+  });
+  context.model.failLifecycle = "selftest";
+
+  assert.throws(
+    () =>
+      reconcileDreaming({
+        enabled: true,
+        inspectRuntime,
+        ...context,
+      }),
+    /selftest failed/,
+  );
+  assert.equal(readState(context.statePath).preexistingRuntime, false);
+
+  assert.throws(
+    () =>
+      reconcileDreaming({
+        enabled: true,
+        inspectRuntime,
+        ...context,
+      }),
+    /selftest failed/,
+  );
+  assert.deepEqual(
+    context.model.lifecycleCalls.map((call) => call.operation),
+    ["install", "selftest", "uninstall", "install", "selftest"],
+  );
+  const state = readState(context.statePath);
+  assert.equal(state.pending, "install");
+  assert.equal(state.preexistingRuntime, false);
 });
 
 test("failed adoption restores a pre-existing runtime", () => {

@@ -319,7 +319,7 @@ export function reconcileDreaming({
   }
 
   const lifecycle = ensureCheckout(repoPath, run);
-  const preexistingRuntime = state.runtimeOwned || runtime.present;
+  const preexistingRuntime = state.runtimeOwned || inspectRuntime(home).present;
   state.pending = "install";
   state.repoPath = repoPath;
   state.preexistingRuntime = preexistingRuntime;
