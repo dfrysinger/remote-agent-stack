@@ -192,12 +192,30 @@ function runLifecycle(lifecycle, operation, repoPath, run) {
   });
 }
 
-function runtimeExists(home) {
-  const launchAgents = join(home, "Library", "LaunchAgents");
-  if (!existsSync(launchAgents)) return false;
-  return readdirSync(launchAgents).some((name) =>
-    /^com\..+\.dreaming\.dreaming\.plist$/.test(name)
-  );
+function inspectRuntimeDefault(home) {
+  const launchAgents =
+    process.env.SKILLS_LAUNCH_AGENTS_DIR ??
+    join(home, "Library", "LaunchAgents");
+  const username = process.env.USER ?? home.split("/").filter(Boolean).at(-1);
+  const prefixes = new Set([
+    process.env.DREAMING_LAUNCHD_PREFIX ?? `com.${username}.dreaming`,
+    process.env.SKILLS_LAUNCHD_PREFIX ?? `com.${username}.skills`,
+  ]);
+  const kinds = ["dreaming", "selftest", "watchdog", "sweep", "curator", "memory"];
+  const present = [];
+  if (existsSync(launchAgents)) {
+    const names = new Set(readdirSync(launchAgents));
+    for (const prefix of prefixes) {
+      for (const kind of kinds) {
+        const name = `${prefix}.${kind}.plist`;
+        if (names.has(name)) present.push(name);
+      }
+    }
+  }
+  return {
+    present: present.length > 0,
+    selftestCount: present.filter((name) => name.endsWith(".selftest.plist")).length,
+  };
 }
 
 export function reconcileDreaming({
@@ -208,7 +226,7 @@ export function reconcileDreaming({
   statePath = defaultStatePath(home),
   run = runDefault,
   persist = writeState,
-  hasRuntime = runtimeExists,
+  inspectRuntime = inspectRuntimeDefault,
   checkOnly = false,
   warn = (message) => process.stderr.write(`warning: ${message}\n`),
 }) {
@@ -229,7 +247,12 @@ export function reconcileDreaming({
     if (checkOnly) return { residual: false, state };
 
     if (state.pending === "install" && state.preexistingRuntime) {
-      runLifecycle(lifecycle, "rollback", selectedRepoPath, run);
+      try {
+        runLifecycle(lifecycle, "rollback", selectedRepoPath, run);
+      } catch (error) {
+        warn(`Dreaming rollback is blocked: ${error.message}`);
+        return { residual: true, state };
+      }
       state.pending = null;
       state.preexistingRuntime = false;
       if (!state.runtimeOwned) {
@@ -263,6 +286,12 @@ export function reconcileDreaming({
 
   validateLocalSkillsRoot(home, run, { create: !checkOnly });
   if (existsSync(repoPath)) validateUpdateCheckout(repoPath, run);
+  const runtime = inspectRuntime(home);
+  if (runtime.selftestCount > 1) {
+    throw new Error(
+      "both legacy and current Dreaming self-test jobs exist; reconcile Dreaming before adoption",
+    );
+  }
   if (checkOnly) return { residual: false, state };
 
   if (state.pending === "install") {
@@ -280,7 +309,7 @@ export function reconcileDreaming({
   }
 
   const lifecycle = ensureCheckout(repoPath, run);
-  const preexistingRuntime = state.runtimeOwned || hasRuntime(home);
+  const preexistingRuntime = state.runtimeOwned || runtime.present;
   state.pending = "install";
   state.repoPath = repoPath;
   state.preexistingRuntime = preexistingRuntime;
@@ -300,7 +329,7 @@ export function reconcileDreaming({
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
-          "Dreaming adoption failed and its pre-existing runtime could not be restored",
+          `Dreaming adoption failed: ${error.message}; rollback failed: ${rollbackError.message}`,
         );
       }
     }

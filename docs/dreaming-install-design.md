@@ -55,6 +55,11 @@ a later deselection can run Dreaming's own uninstall path. Uninstall removes
 only a runtime recorded as owned and preserves the source checkout and Dreaming
 recovery state.
 
+Both current `com.<user>.dreaming.*` jobs and legacy
+`com.<user>.skills.*` jobs count as a pre-existing runtime. A mixed state with
+both self-test jobs fails before mutation because Dreaming's rollback contract
+requires exactly one backed-up self-test job.
+
 Missing Copilot is fatal for an explicit `--dreaming` selection. A saved
 selection is retained with a warning so a temporarily unavailable CLI does not
 silently erase intent.

@@ -165,7 +165,7 @@ test("failed adoption restores a pre-existing runtime", () => {
     () =>
       reconcileDreaming({
         enabled: true,
-        hasRuntime: () => true,
+        inspectRuntime: () => ({ present: true, selftestCount: 1 }),
         ...context,
       }),
     /selftest failed/,
@@ -196,7 +196,6 @@ test("interrupted adoption rolls back instead of uninstalling", () => {
       repoPath: context.repoPath,
       preexistingRuntime: true,
     })}\n`,
-    { recursive: true },
   );
 
   reconcileDreaming({ enabled: false, ...context });
@@ -205,6 +204,75 @@ test("interrupted adoption rolls back instead of uninstalling", () => {
     ["rollback"],
   );
   assert.equal(existsSync(context.statePath), false);
+});
+
+test("legacy Dreaming jobs are treated as pre-existing", () => {
+  const context = fixture();
+  const launchAgents = join(context.home, "Library", "LaunchAgents");
+  mkdirSync(launchAgents, { recursive: true });
+  writeFileSync(
+    join(launchAgents, `com.${process.env.USER}.skills.dreaming.plist`),
+    "legacy\n",
+  );
+  context.model.failLifecycle = "selftest";
+
+  assert.throws(
+    () => reconcileDreaming({ enabled: true, ...context }),
+    /selftest failed/,
+  );
+  assert.deepEqual(
+    context.model.lifecycleCalls.map((call) => call.operation),
+    ["install", "selftest", "rollback"],
+  );
+});
+
+test("mixed legacy and current self-test jobs fail before mutation", () => {
+  const context = fixture();
+  context.materializeRepo();
+  mkdirSync(join(context.home, ".copilot", "skills", ".git"), { recursive: true });
+  const launchAgents = join(context.home, "Library", "LaunchAgents");
+  mkdirSync(launchAgents, { recursive: true });
+  for (const prefix of [
+    `com.${process.env.USER}.skills`,
+    `com.${process.env.USER}.dreaming`,
+  ]) {
+    writeFileSync(join(launchAgents, `${prefix}.selftest.plist`), "fixture\n");
+  }
+
+  assert.throws(
+    () => reconcileDreaming({ enabled: true, checkOnly: true, ...context }),
+    /both legacy and current/,
+  );
+  assert.deepEqual(context.model.lifecycleCalls, []);
+});
+
+test("blocked adoption rollback remains a reported residual", () => {
+  const context = fixture();
+  context.materializeRepo();
+  mkdirSync(join(context.home, ".local", "state", "remote-agent-stack"), {
+    recursive: true,
+  });
+  writeFileSync(
+    context.statePath,
+    `${JSON.stringify({
+      version: 1,
+      runtimeOwned: false,
+      pending: "install",
+      repoPath: context.repoPath,
+      preexistingRuntime: true,
+    })}\n`,
+  );
+  context.model.failLifecycle = "rollback";
+  const warnings = [];
+
+  const result = reconcileDreaming({
+    enabled: false,
+    warn: (message) => warnings.push(message),
+    ...context,
+  });
+  assert.equal(result.residual, true);
+  assert.equal(readState(context.statePath).pending, "install");
+  assert.match(warnings[0], /rollback is blocked/);
 });
 
 test("deselection preserves an unowned runtime", () => {
