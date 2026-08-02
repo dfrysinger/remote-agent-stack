@@ -24,6 +24,8 @@ function fixture() {
     remote: "https://github.com/dfrysinger/dreaming.git",
     branch: "main",
     dirty: false,
+    head: "upstream",
+    upstream: "upstream",
     localSkillsRemote: false,
     lifecycleCalls: [],
     failLifecycle: null,
@@ -67,6 +69,12 @@ function fixture() {
     }
     if (command === "git" && args.includes("--show-current")) {
       return result(`${model.branch}\n`);
+    }
+    if (command === "git" && args.at(-1) === "HEAD") {
+      return result(`${model.head}\n`);
+    }
+    if (command === "git" && args.at(-1) === "origin/main") {
+      return result(`${model.upstream}\n`);
     }
     if (command === "git" && args.at(-1) === "remote") {
       return result(model.localSkillsRemote ? "origin\n" : "");
@@ -149,6 +157,56 @@ test("failed self-test never enables and remains recoverable", () => {
   assert.equal(existsSync(context.statePath), false);
 });
 
+test("failed adoption restores a pre-existing runtime", () => {
+  const context = fixture();
+  context.model.failLifecycle = "selftest";
+
+  assert.throws(
+    () =>
+      reconcileDreaming({
+        enabled: true,
+        hasRuntime: () => true,
+        ...context,
+      }),
+    /selftest failed/,
+  );
+  assert.deepEqual(
+    context.model.lifecycleCalls.map((call) => call.operation),
+    ["install", "selftest", "rollback"],
+  );
+  assert.equal(existsSync(context.statePath), false);
+
+  context.model.lifecycleCalls.length = 0;
+  reconcileDreaming({ enabled: false, ...context });
+  assert.deepEqual(context.model.lifecycleCalls, []);
+});
+
+test("interrupted adoption rolls back instead of uninstalling", () => {
+  const context = fixture();
+  context.materializeRepo();
+  mkdirSync(join(context.home, ".local", "state", "remote-agent-stack"), {
+    recursive: true,
+  });
+  writeFileSync(
+    context.statePath,
+    `${JSON.stringify({
+      version: 1,
+      runtimeOwned: false,
+      pending: "install",
+      repoPath: context.repoPath,
+      preexistingRuntime: true,
+    })}\n`,
+    { recursive: true },
+  );
+
+  reconcileDreaming({ enabled: false, ...context });
+  assert.deepEqual(
+    context.model.lifecycleCalls.map((call) => call.operation),
+    ["rollback"],
+  );
+  assert.equal(existsSync(context.statePath), false);
+});
+
 test("deselection preserves an unowned runtime", () => {
   const context = fixture();
   context.materializeRepo();
@@ -168,6 +226,53 @@ test("owned runtime uninstalls but preserves its checkout", () => {
   );
   assert.equal(existsSync(context.repoPath), true);
   assert.equal(existsSync(context.statePath), false);
+});
+
+test("owned runtime can uninstall from a dirty non-main checkout", () => {
+  const context = fixture();
+  reconcileDreaming({ enabled: true, ...context });
+  context.model.lifecycleCalls.length = 0;
+  context.model.dirty = true;
+  context.model.branch = "work-in-progress";
+
+  reconcileDreaming({ enabled: false, ...context });
+  assert.deepEqual(
+    context.model.lifecycleCalls.map((call) => call.operation),
+    ["uninstall"],
+  );
+});
+
+test("rejects local commits ahead of origin main", () => {
+  const context = fixture();
+  context.materializeRepo();
+  mkdirSync(join(context.home, ".copilot", "skills", ".git"), { recursive: true });
+  context.model.head = "local-ahead";
+
+  assert.throws(
+    () => reconcileDreaming({ enabled: true, ...context }),
+    /local commits/,
+  );
+  assert.deepEqual(context.model.lifecycleCalls, []);
+});
+
+test("failed owned update rolls back and retains ownership", () => {
+  const context = fixture();
+  reconcileDreaming({ enabled: true, ...context });
+  context.model.lifecycleCalls.length = 0;
+  context.model.failLifecycle = "selftest";
+
+  assert.throws(
+    () => reconcileDreaming({ enabled: true, ...context }),
+    /selftest failed/,
+  );
+  assert.deepEqual(
+    context.model.lifecycleCalls.map((call) => call.operation),
+    ["install", "selftest", "rollback"],
+  );
+  const state = readState(context.statePath);
+  assert.equal(state.runtimeOwned, true);
+  assert.equal(state.pending, null);
+  assert.equal(state.repoPath, context.repoPath);
 });
 
 test("rejects dirty, foreign, and remote-backed roots", () => {

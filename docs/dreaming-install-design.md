@@ -48,9 +48,12 @@ interactively selects Dreaming and a complete install/self-test/enable sequence
 succeeds.
 
 The journal records an install before lifecycle mutation. A failed self-test
-therefore cannot enable Dreaming, and a later deselection can still run
-Dreaming's own uninstall path. Uninstall removes only a runtime recorded as
-owned and preserves the source checkout and Dreaming recovery state.
+therefore cannot enable Dreaming. If a runtime existed before an attempted
+adoption, failure or interruption invokes Dreaming's rollback path rather than
+uninstalling that runtime. A newly created partial runtime remains journaled so
+a later deselection can run Dreaming's own uninstall path. Uninstall removes
+only a runtime recorded as owned and preserves the source checkout and Dreaming
+recovery state.
 
 Missing Copilot is fatal for an explicit `--dreaming` selection. A saved
 selection is retained with a warning so a temporarily unavailable CLI does not

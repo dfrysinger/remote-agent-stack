@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -30,6 +31,7 @@ function emptyState() {
     runtimeOwned: false,
     pending: null,
     repoPath: null,
+    preexistingRuntime: false,
   };
 }
 
@@ -40,11 +42,12 @@ export function readState(path = defaultStatePath()) {
     state?.version !== 1 ||
     typeof state.runtimeOwned !== "boolean" ||
     !["install", "uninstall", null].includes(state.pending) ||
-    ![null, "string"].includes(state.repoPath === null ? null : typeof state.repoPath)
+    ![null, "string"].includes(state.repoPath === null ? null : typeof state.repoPath) ||
+    !["undefined", "boolean"].includes(typeof state.preexistingRuntime)
   ) {
     throw new Error(`invalid Dreaming state at ${path}`);
   }
-  return state;
+  return { ...emptyState(), ...state };
 }
 
 export function writeState(path, state) {
@@ -63,10 +66,15 @@ export function writeState(path, state) {
   chmodSync(path, 0o600);
 }
 
-function runDefault(command, args, { allowFailure = false, env } = {}) {
+function runDefault(
+  command,
+  args,
+  { allowFailure = false, env, inherit = false } = {},
+) {
   const result = spawnSync(command, args, {
-    encoding: "utf8",
+    encoding: inherit ? undefined : "utf8",
     env: env ?? process.env,
+    stdio: inherit ? "inherit" : "pipe",
     timeout: 600_000,
   });
   if (result.error?.code === "ENOENT") {
@@ -114,7 +122,7 @@ function output(result) {
   return String(result.stdout ?? "").trim();
 }
 
-function validateCheckout(repoPath, run) {
+function validateCheckoutIdentity(repoPath, run) {
   if (!existsSync(join(repoPath, ".git"))) {
     throw new Error(`${repoPath} exists but is not a Git checkout`);
   }
@@ -122,16 +130,21 @@ function validateCheckout(repoPath, run) {
   if (!expectedGitSource(remote)) {
     throw new Error(`${repoPath} has a foreign origin: ${remote || "(missing)"}`);
   }
+  const lifecycle = join(repoPath, "scripts", "install.sh");
+  if (!existsSync(lifecycle)) {
+    throw new Error(`${repoPath} is missing scripts/install.sh`);
+  }
+  return lifecycle;
+}
+
+function validateUpdateCheckout(repoPath, run) {
+  const lifecycle = validateCheckoutIdentity(repoPath, run);
   if (output(run("git", ["-C", repoPath, "status", "--porcelain"]))) {
     throw new Error(`${repoPath} has local changes; refusing to update it`);
   }
   const branch = output(run("git", ["-C", repoPath, "branch", "--show-current"]));
   if (branch !== "main") {
     throw new Error(`${repoPath} is on ${branch || "a detached HEAD"}, not main`);
-  }
-  const lifecycle = join(repoPath, "scripts", "install.sh");
-  if (!existsSync(lifecycle)) {
-    throw new Error(`${repoPath} is missing scripts/install.sh`);
   }
   return lifecycle;
 }
@@ -157,9 +170,14 @@ function ensureCheckout(repoPath, run) {
     mkdirSync(dirname(repoPath), { recursive: true });
     run("git", ["clone", `https://github.com/${SOURCE_REPO}.git`, repoPath]);
   }
-  const lifecycle = validateCheckout(repoPath, run);
+  const lifecycle = validateUpdateCheckout(repoPath, run);
   run("git", ["-C", repoPath, "fetch", "origin", "main"]);
   run("git", ["-C", repoPath, "merge", "--ff-only", "origin/main"]);
+  const head = output(run("git", ["-C", repoPath, "rev-parse", "HEAD"]));
+  const upstream = output(run("git", ["-C", repoPath, "rev-parse", "origin/main"]));
+  if (head !== upstream) {
+    throw new Error(`${repoPath} contains local commits not present on origin/main`);
+  }
   return lifecycle;
 }
 
@@ -170,7 +188,16 @@ function runLifecycle(lifecycle, operation, repoPath, run) {
       DREAMING_REPO_ROOT: repoPath,
       DREAMING_SKIP_PLUGIN_SYNC: "1",
     },
+    inherit: true,
   });
+}
+
+function runtimeExists(home) {
+  const launchAgents = join(home, "Library", "LaunchAgents");
+  if (!existsSync(launchAgents)) return false;
+  return readdirSync(launchAgents).some((name) =>
+    /^com\..+\.dreaming\.dreaming\.plist$/.test(name)
+  );
 }
 
 export function reconcileDreaming({
@@ -181,6 +208,7 @@ export function reconcileDreaming({
   statePath = defaultStatePath(home),
   run = runDefault,
   persist = writeState,
+  hasRuntime = runtimeExists,
   checkOnly = false,
   warn = (message) => process.stderr.write(`warning: ${message}\n`),
 }) {
@@ -192,13 +220,25 @@ export function reconcileDreaming({
     if (!managed) return { residual: false, state };
     let lifecycle;
     try {
-      lifecycle = validateCheckout(selectedRepoPath, run);
+      lifecycle = validateCheckoutIdentity(selectedRepoPath, run);
     } catch (error) {
       if (checkOnly) throw error;
       warn(`Dreaming removal is blocked: ${error.message}`);
       return { residual: true, state };
     }
     if (checkOnly) return { residual: false, state };
+
+    if (state.pending === "install" && state.preexistingRuntime) {
+      runLifecycle(lifecycle, "rollback", selectedRepoPath, run);
+      state.pending = null;
+      state.preexistingRuntime = false;
+      if (!state.runtimeOwned) {
+        state.repoPath = null;
+        persist(statePath, state);
+        return { residual: false, state };
+      }
+      persist(statePath, state);
+    }
 
     state.pending = "uninstall";
     state.repoPath = selectedRepoPath;
@@ -207,6 +247,7 @@ export function reconcileDreaming({
     state.runtimeOwned = false;
     state.pending = null;
     state.repoPath = null;
+    state.preexistingRuntime = false;
     persist(statePath, state);
     return { residual: false, state };
   }
@@ -221,18 +262,53 @@ export function reconcileDreaming({
   }
 
   validateLocalSkillsRoot(home, run, { create: !checkOnly });
-  if (existsSync(repoPath)) validateCheckout(repoPath, run);
+  if (existsSync(repoPath)) validateUpdateCheckout(repoPath, run);
   if (checkOnly) return { residual: false, state };
 
+  if (state.pending === "install") {
+    const recoveryLifecycle = validateCheckoutIdentity(selectedRepoPath, run);
+    runLifecycle(
+      recoveryLifecycle,
+      state.preexistingRuntime || state.runtimeOwned ? "rollback" : "uninstall",
+      selectedRepoPath,
+      run,
+    );
+    state.pending = null;
+    state.preexistingRuntime = false;
+    if (!state.runtimeOwned) state.repoPath = null;
+    persist(statePath, state);
+  }
+
   const lifecycle = ensureCheckout(repoPath, run);
+  const preexistingRuntime = state.runtimeOwned || hasRuntime(home);
   state.pending = "install";
   state.repoPath = repoPath;
+  state.preexistingRuntime = preexistingRuntime;
   persist(statePath, state);
-  runLifecycle(lifecycle, "install", repoPath, run);
-  runLifecycle(lifecycle, "selftest", repoPath, run);
-  runLifecycle(lifecycle, "enable", repoPath, run);
+  try {
+    runLifecycle(lifecycle, "install", repoPath, run);
+    runLifecycle(lifecycle, "selftest", repoPath, run);
+    runLifecycle(lifecycle, "enable", repoPath, run);
+  } catch (error) {
+    if (preexistingRuntime) {
+      try {
+        runLifecycle(lifecycle, "rollback", repoPath, run);
+        state.pending = null;
+        state.preexistingRuntime = false;
+        if (!state.runtimeOwned) state.repoPath = null;
+        persist(statePath, state);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Dreaming adoption failed and its pre-existing runtime could not be restored",
+        );
+      }
+    }
+    throw error;
+  }
   state.runtimeOwned = true;
   state.pending = null;
+  state.preexistingRuntime = false;
   persist(statePath, state);
   return { residual: false, state };
 }
