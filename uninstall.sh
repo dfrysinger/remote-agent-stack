@@ -6,6 +6,7 @@
 #   - /usr/local/bin/claude-agent  + cc symlinks (claude  backend)
 #   - /usr/local/bin/ss and /usr/local/bin/vncfix symlinks (GUI helpers)
 #   - selected CLI agent-help MCP entries + managed instruction blocks
+#   - an owned headless Dreaming runtime
 #   - bounded Screen Sharing helper, watchdog, root config, state, and sudoers
 #   - /etc/resolver/ts.net
 #   - ~/.tmux.conf managed block (status-bar-off settings)
@@ -24,6 +25,7 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/remote-agent-stack"
 MCP_SERVER="$CONFIG_DIR/agent-help/server/server.mjs"
 MANAGE_AGENT_HELP="$REPO_ROOT/scripts/manage-agent-help.mjs"
 MANAGE_SKILLS_PLUGIN="$REPO_ROOT/scripts/manage-skills-plugin.mjs"
+MANAGE_DREAMING="$REPO_ROOT/scripts/manage-dreaming.mjs"
 SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
 SS_ROOT_CONFIG_DIR="/usr/local/etc/remote-agent-stack"
 SS_STATE_DIR="/var/db/remote-agent-stack"
@@ -44,6 +46,17 @@ bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 skip() { printf '  \033[2m·\033[0m %s\n' "$*"; }
 todo() { printf '  \033[36m→\033[0m %s\n' "$*"; }
+
+read_config_var() {
+  local var="$1"
+  [ -f "$CONFIG_DIR/config" ] || return 0
+  awk -v v="$var" -F'=' '$1 ~ "^[[:space:]]*" v "$" {
+    sub("^[[:space:]]*" v "=", "", $0)
+    gsub(/^"|"$/, "", $0)
+    print
+    exit
+  }' "$CONFIG_DIR/config" 2>/dev/null || true
+}
 
 bold "Removing bounded Screen Sharing support"
 if [ -L "$SS_ROOT_DST" ]; then
@@ -147,6 +160,26 @@ if command -v node >/dev/null 2>&1 && [ -f "$MANAGE_SKILLS_PLUGIN" ]; then
   fi
 else
   echo "Node.js and $MANAGE_SKILLS_PLUGIN are required for ownership-safe skills removal; continuing." >&2
+  UNINSTALL_STATUS=1
+fi
+
+bold "Removing owned Dreaming runtime"
+if command -v node >/dev/null 2>&1 && [ -f "$MANAGE_DREAMING" ]; then
+  DREAMING_REPO_ROOT="$(read_config_var DREAMING_REPO_ROOT)"
+  DREAMING_REPO_ROOT="${DREAMING_REPO_ROOT:-$HOME/code/dreaming}"
+  if node "$MANAGE_DREAMING" \
+    --mode reconcile \
+    --enabled false \
+    --explicit false \
+    --repo "$DREAMING_REPO_ROOT" \
+    --fail-on-residual true; then
+    ok "removed owned Dreaming runtime and preserved its checkout"
+  else
+    echo "Owned Dreaming runtime could not be removed; continuing stack cleanup." >&2
+    UNINSTALL_STATUS=1
+  fi
+else
+  echo "Node.js and $MANAGE_DREAMING are required for ownership-safe Dreaming removal; continuing." >&2
   UNINSTALL_STATUS=1
 fi
 
@@ -256,5 +289,6 @@ if [ "$PURGE" = "false" ]; then
 fi
 if [ "$UNINSTALL_STATUS" -ne 0 ]; then
   echo "  • Skills plugin state: restore missing CLIs and rerun uninstall"
+  echo "  • Dreaming state: restore its checkout and rerun uninstall"
   exit "$UNINSTALL_STATUS"
 fi

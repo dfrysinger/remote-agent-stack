@@ -26,6 +26,8 @@ COPILOT_WORKSPACE_BASE_ARG=""
 CLAUDE_WORKSPACE_BASE_ARG=""
 AGENT_HELP_CLIS_ARG=""
 SKILLS_CLIS_ARG=""
+DREAMING_ARG=""
+DREAMING_REPO_ROOT_ARG="${DREAMING_REPO_ROOT:-}"
 AGENT_HELP_RECIPIENT_ARG="${AGENT_HELP_RECIPIENT:-}"
 SCREEN_SHARING_PORT_ARG=""
 DESK_DISPLAY_COUNT_ARG=""
@@ -44,6 +46,10 @@ Options:
                                  copilot,claude,codex or none.
   --skills-clis LIST              Complete desired set for dfrysinger-skills:
                                  copilot,claude,codex or none.
+  --dreaming                      Install and enable the headless Dreaming
+                                 service for Copilot CLI.
+  --no-dreaming                   Disable an owned Dreaming service.
+  --dreaming-repo PATH            Dreaming checkout (default: ~/code/dreaming).
   --agent-help-recipient HANDLE  iMessage phone number or Apple ID. Prefer the
                                  interactive no-echo prompt or
                                  AGENT_HELP_RECIPIENT to avoid shell history.
@@ -79,6 +85,15 @@ while [ $# -gt 0 ]; do
       SKILLS_CLIS_ARG="$2"; shift 2 ;;
     --skills-clis=*)
       SKILLS_CLIS_ARG="${1#*=}"; shift ;;
+    --dreaming)
+      DREAMING_ARG="true"; shift ;;
+    --no-dreaming)
+      DREAMING_ARG="false"; shift ;;
+    --dreaming-repo)
+      [ $# -ge 2 ] || { echo "--dreaming-repo requires a path" >&2; exit 2; }
+      DREAMING_REPO_ROOT_ARG="$2"; shift 2 ;;
+    --dreaming-repo=*)
+      DREAMING_REPO_ROOT_ARG="${1#*=}"; shift ;;
     --agent-help-recipient)
       [ $# -ge 2 ] || { echo "--agent-help-recipient requires a handle" >&2; exit 2; }
       AGENT_HELP_RECIPIENT_ARG="$2"; shift 2 ;;
@@ -127,6 +142,7 @@ MCP_DST="$CONFIG_DIR/agent-help/server"
 MCP_SERVER="$MCP_DST/server.mjs"
 MANAGE_AGENT_HELP="$REPO_ROOT/scripts/manage-agent-help.mjs"
 MANAGE_SKILLS_PLUGIN="$REPO_ROOT/scripts/manage-skills-plugin.mjs"
+MANAGE_DREAMING="$REPO_ROOT/scripts/manage-dreaming.mjs"
 SS_ROOT_SRC="$REPO_ROOT/libexec/ss-on-demand"
 SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
 SS_ROOT_CONFIG="/usr/local/etc/remote-agent-stack/screen-sharing.conf"
@@ -357,6 +373,56 @@ done
 [ -n "$SKILLS_CLIS_RESOLVED" ] && ok "skills CLIs: $SKILLS_CLIS_RESOLVED" ||
   skip "dfrysinger-skills disabled"
 
+# ---- Dreaming selection ---------------------------------------------------
+
+bold "Dreaming (optional)"
+
+EXISTING_DREAMING_ENABLED="$(read_config_var DREAMING_ENABLED)"
+EXISTING_DREAMING_REPO_ROOT="$(read_config_var DREAMING_REPO_ROOT)"
+DREAMING_REPO_ROOT_RESOLVED="${DREAMING_REPO_ROOT_ARG:-${EXISTING_DREAMING_REPO_ROOT:-$HOME/code/dreaming}}"
+DREAMING_EXPLICIT="false"
+
+if [ -n "$DREAMING_ARG" ]; then
+  DREAMING_ENABLED_RESOLVED="$DREAMING_ARG"
+  DREAMING_EXPLICIT="true"
+elif [ -n "$EXISTING_DREAMING_ENABLED" ]; then
+  DREAMING_ENABLED_RESOLVED="$EXISTING_DREAMING_ENABLED"
+  ok "keeping existing Dreaming selection: $DREAMING_ENABLED_RESOLVED"
+elif [ -t 0 ] && [ -t 1 ]; then
+  DREAMING_DEFAULT="false"
+  if [ -f "$HOME/Library/LaunchAgents/com.$(id -un).dreaming.dreaming.plist" ]; then
+    DREAMING_DEFAULT="true"
+  fi
+  echo "    Install the headless Dreaming learning and skill-curation service?"
+  echo "    Its private skills stay out of normal interactive CLI context."
+  if [ "$DREAMING_DEFAULT" = "true" ]; then
+    printf "    Enable? [Y/n]: "
+  else
+    printf "    Enable? [y/N]: "
+  fi
+  read -r DREAMING_INPUT || DREAMING_INPUT=""
+  case "$DREAMING_INPUT" in
+    y|Y|yes|YES|true) DREAMING_ENABLED_RESOLVED="true" ;;
+    n|N|no|NO|false) DREAMING_ENABLED_RESOLVED="false" ;;
+    "") DREAMING_ENABLED_RESOLVED="$DREAMING_DEFAULT" ;;
+    *) fail "Dreaming selection must be yes or no" ;;
+  esac
+else
+  DREAMING_ENABLED_RESOLVED="false"
+  ok "non-interactive Dreaming selection: disabled"
+fi
+
+case "$DREAMING_ENABLED_RESOLVED" in
+  true|false) ;;
+  *) fail "saved DREAMING_ENABLED must be true or false" ;;
+esac
+
+if [ "$DREAMING_ENABLED_RESOLVED" = "true" ]; then
+  ok "Dreaming enabled from $DREAMING_REPO_ROOT_RESOLVED"
+else
+  skip "Dreaming disabled"
+fi
+
 EXISTING_SCREEN_SHARING_PORT="$(read_config_var SCREEN_SHARING_PORT)"
 EXISTING_DESK_DISPLAY_COUNT="$(read_config_var DESK_DISPLAY_COUNT)"
 EXISTING_SCREEN_SHARING_HOURS="$(read_config_var SCREEN_SHARING_HOURS)"
@@ -379,6 +445,13 @@ node "$MANAGE_SKILLS_PLUGIN" \
   --clis "$SKILLS_CLIS_RESOLVED" \
   --explicit-clis "$SKILLS_EXPLICIT_CLIS"
 ok "selected skills plugin configuration is ownership-safe"
+
+node "$MANAGE_DREAMING" \
+  --mode check \
+  --enabled "$DREAMING_ENABLED_RESOLVED" \
+  --explicit "$DREAMING_EXPLICIT" \
+  --repo "$DREAMING_REPO_ROOT_RESOLVED"
+ok "selected Dreaming configuration is ownership-safe"
 
 # ---- detect what needs root -----------------------------------------------
 #
@@ -506,7 +579,7 @@ done
 # Ensure the wrapper + GUI helpers are executable (no sudo needed).
 chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC" "$SS_ROOT_SRC" \
   "$MCP_SRC/server.mjs" "$MCP_SRC/configure.mjs" "$MANAGE_AGENT_HELP" \
-  "$MANAGE_SKILLS_PLUGIN"
+  "$MANAGE_SKILLS_PLUGIN" "$MANAGE_DREAMING"
 
 if [ ! -f "$SS_ROOT_DST" ] || ! cmp -s "$SS_ROOT_SRC" "$SS_ROOT_DST" ||
    [ ! -f "$SS_EXPIRY_PLIST_DST" ] ||
@@ -993,6 +1066,8 @@ ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 # agent-help/config.json (mode 0600), never in this regenerated wrapper file.
 AGENT_HELP_CLIS="${AGENT_HELP_CLIS_RESOLVED:-none}"
 SKILLS_CLIS="${SKILLS_CLIS_RESOLVED:-none}"
+DREAMING_ENABLED="$DREAMING_ENABLED_RESOLVED"
+DREAMING_REPO_ROOT="$DREAMING_REPO_ROOT_RESOLVED"
 SCREEN_SHARING_PORT="$SCREEN_SHARING_PORT_RESOLVED"
 DESK_DISPLAY_COUNT="$DESK_DISPLAY_COUNT_RESOLVED"
 SCREEN_SHARING_HOURS="$SCREEN_SHARING_HOURS_RESOLVED"
@@ -1260,6 +1335,21 @@ if [ -n "$SKILLS_CLIS_RESOLVED" ]; then
   todo "restart active CLI sessions so they load the updated skills"
 else
   ok "removed owned dfrysinger-skills plugins and marketplaces"
+fi
+
+# ---- headless Dreaming service --------------------------------------------
+
+bold "Dreaming service"
+
+node "$MANAGE_DREAMING" \
+  --mode reconcile \
+  --enabled "$DREAMING_ENABLED_RESOLVED" \
+  --explicit "$DREAMING_EXPLICIT" \
+  --repo "$DREAMING_REPO_ROOT_RESOLVED"
+if [ "$DREAMING_ENABLED_RESOLVED" = "true" ]; then
+  ok "installed, self-tested, and enabled headless Dreaming"
+else
+  ok "removed the owned Dreaming runtime, if present"
 fi
 
 # ---- manual steps ---------------------------------------------------------
