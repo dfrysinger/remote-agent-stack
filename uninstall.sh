@@ -166,7 +166,7 @@ fi
 bold "Removing owned Dreaming runtime"
 if command -v node >/dev/null 2>&1 && [ -f "$MANAGE_DREAMING" ]; then
   DREAMING_REPO_ROOT="$(read_config_var DREAMING_REPO_ROOT)"
-  DREAMING_REPO_ROOT="${DREAMING_REPO_ROOT:-$HOME/code/dreaming}"
+  DREAMING_REPO_ROOT="${DREAMING_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/remote-agent-stack/dreaming}"
   if node "$MANAGE_DREAMING" \
     --mode reconcile \
     --enabled false \

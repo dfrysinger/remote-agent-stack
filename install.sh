@@ -49,7 +49,8 @@ Options:
   --dreaming                      Install and enable the headless Dreaming
                                  service for Copilot CLI.
   --no-dreaming                   Disable an owned Dreaming service.
-  --dreaming-repo PATH            Dreaming checkout (default: ~/code/dreaming).
+  --dreaming-repo PATH            Dreaming runtime checkout (default:
+                                 ~/.local/share/remote-agent-stack/dreaming).
   --agent-help-recipient HANDLE  iMessage phone number or Apple ID. Prefer the
                                  interactive no-echo prompt or
                                  AGENT_HELP_RECIPIENT to avoid shell history.
@@ -379,7 +380,7 @@ bold "Dreaming (optional)"
 
 EXISTING_DREAMING_ENABLED="$(read_config_var DREAMING_ENABLED)"
 EXISTING_DREAMING_REPO_ROOT="$(read_config_var DREAMING_REPO_ROOT)"
-DREAMING_REPO_ROOT_RESOLVED="${DREAMING_REPO_ROOT_ARG:-${EXISTING_DREAMING_REPO_ROOT:-$HOME/code/dreaming}}"
+DREAMING_REPO_ROOT_RESOLVED="${DREAMING_REPO_ROOT_ARG:-${EXISTING_DREAMING_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/remote-agent-stack/dreaming}}"
 DREAMING_EXPLICIT="false"
 
 if [ -n "$DREAMING_ARG" ]; then

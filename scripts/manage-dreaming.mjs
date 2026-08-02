@@ -25,6 +25,14 @@ function defaultStatePath(home = homedir()) {
   );
 }
 
+function defaultRepoPath(home = homedir()) {
+  return join(
+    process.env.XDG_DATA_HOME ?? join(home, ".local", "share"),
+    "remote-agent-stack",
+    "dreaming",
+  );
+}
+
 function emptyState() {
   return {
     version: 1,
@@ -224,7 +232,7 @@ export function reconcileDreaming({
   enabled,
   explicit = false,
   home = homedir(),
-  repoPath = join(home, "code", "dreaming"),
+  repoPath = defaultRepoPath(home),
   statePath = defaultStatePath(home),
   run = runDefault,
   persist = writeState,
@@ -366,7 +374,7 @@ function main() {
   const result = reconcileDreaming({
     enabled: parseBoolean(args.enabled ?? "false", "--enabled"),
     explicit: parseBoolean(args.explicit ?? "false", "--explicit"),
-    repoPath: args.repo || join(homedir(), "code", "dreaming"),
+    repoPath: args.repo || defaultRepoPath(),
     statePath: args.state || defaultStatePath(),
     checkOnly: args.mode === "check",
   });

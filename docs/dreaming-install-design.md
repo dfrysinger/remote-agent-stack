@@ -21,9 +21,11 @@ Copilot-only headless service.
 to enabled when a Dreaming launchd job is already present. Noninteractive
 installs default to disabled unless a saved choice exists.
 
-The source checkout defaults to `~/code/dreaming`. The installer clones it when
-absent and otherwise updates only an exact, clean `dfrysinger/dreaming` checkout
-on `main` using a fast-forward merge.
+The source checkout defaults to the dedicated runtime path
+`${XDG_DATA_HOME:-~/.local/share}/remote-agent-stack/dreaming`. The installer
+clones it when absent and otherwise updates only an exact, clean
+`dfrysinger/dreaming` checkout on `main` using a fast-forward merge. A separate
+development checkout is not read or modified.
 
 Installation delegates in order to:
 

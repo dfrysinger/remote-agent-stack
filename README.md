@@ -317,9 +317,11 @@ Copilot-only, headless learning and skill-curation service:
 ./install.sh --dreaming
 ```
 
-Dreaming is independent of `--skills-clis`. Its checkout defaults to
-`~/code/dreaming`, and installation delegates to Dreaming's own install,
-self-test, and enable lifecycle. The stack sets
+Dreaming is independent of `--skills-clis`. Its dedicated runtime checkout
+defaults to `~/.local/share/remote-agent-stack/dreaming`, so a separate
+development checkout can remain on another branch or contain local edits.
+Installation delegates to Dreaming's own install, self-test, and enable
+lifecycle. The stack sets
 `DREAMING_SKIP_PLUGIN_SYNC=1`, so Dreaming's five private orchestration skills
 do not appear in normal interactive CLI context. `--no-dreaming` removes only a
 runtime adopted by this installer and preserves the checkout and recovery
