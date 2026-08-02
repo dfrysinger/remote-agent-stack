@@ -607,7 +607,7 @@ Once everything is set up:
   `screens://<tailscale-name>:<port>` link. See
   [`docs/screen-sharing.md`](docs/screen-sharing.md).
 - **Agent needs you**: the selected CLIs expose `request_help`.
-  Their managed global instructions tell agents to call it once when
+  Its tool description tells agents to call it once when
   blocked on your login, permission, or decision. The request opens
   Screen Sharing for `SCREEN_SHARING_HOURS` and identifies the originating
   NATO-alphabet tmux session.
@@ -686,7 +686,9 @@ preserved.
 installer. Deselecting a CLI removes only owned plugin and marketplace
 registrations; same-named user-managed installations are left untouched.
 
-The installer writes the same managed help guidance to:
+The help guidance lives in the `request_help` tool description, which is in
+context for any CLI where the tool is registered. The installer no longer adds
+a managed instruction block, and removes any block it previously wrote from:
 
 - Copilot CLI: `~/.copilot/copilot-instructions.md`
 - Claude Code: `~/.claude/CLAUDE.md`

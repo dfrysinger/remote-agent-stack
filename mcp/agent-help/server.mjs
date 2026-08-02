@@ -135,7 +135,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "request_help",
       description:
-        "Send the owner one bounded help message when this CLI agent needs a login, permission, decision, or other human action. Use only a short non-secret context label.",
+        "Send the owner one bounded help message when this CLI agent needs a login, permission, decision, or other human action and the owner may not be at the machine. Use only a short non-secret context label. Send once per blocker and keep working on anything that does not depend on it; never send a second message for the same blocker.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
