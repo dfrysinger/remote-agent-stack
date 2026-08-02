@@ -113,7 +113,8 @@ test("installs, self-tests, and enables without syncing the plugin", () => {
     context.model.lifecycleCalls.every(
       (call) =>
         call.env.DREAMING_SKIP_PLUGIN_SYNC === "1" &&
-        call.env.DREAMING_REPO_ROOT === context.repoPath,
+        call.env.DREAMING_REPO_ROOT === context.repoPath &&
+        call.env.DREAMING_SELFTEST_WAIT_SECS === "900",
     ),
     true,
   );

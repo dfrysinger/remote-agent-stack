@@ -75,7 +75,7 @@ function runDefault(
     encoding: inherit ? undefined : "utf8",
     env: env ?? process.env,
     stdio: inherit ? "inherit" : "pipe",
-    timeout: 600_000,
+    timeout: 1_000_000,
   });
   if (result.error?.code === "ENOENT") {
     if (allowFailure) return result;
@@ -187,6 +187,8 @@ function runLifecycle(lifecycle, operation, repoPath, run) {
       ...process.env,
       DREAMING_REPO_ROOT: repoPath,
       DREAMING_SKIP_PLUGIN_SYNC: "1",
+      DREAMING_SELFTEST_WAIT_SECS:
+        process.env.DREAMING_SELFTEST_WAIT_SECS ?? "900",
     },
     inherit: true,
   });

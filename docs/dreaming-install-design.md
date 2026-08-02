@@ -34,7 +34,9 @@ Installation delegates in order to:
 Every command receives `DREAMING_SKIP_PLUGIN_SYNC=1`. The service gets its own
 repo and immutable shared dependency bundle through headless `--plugin-dir`
 arguments; normal Copilot sessions do not gain the five Dreaming orchestration
-skills.
+skills. The manager gives the complete launchd self-test up to 15 minutes to
+finish under load; enablement still requires Dreaming's generation-bound passing
+result.
 
 The local `~/.copilot/skills` root is initialized as a no-remote Git repository
 when absent. Existing non-Git or remote-backed roots are rejected.
