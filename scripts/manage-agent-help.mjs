@@ -31,6 +31,13 @@ not repeatedly notify for the same blocker. The tool identifies the agent from
 its NATO-alphabet tmux session name and opens a bounded Screens link.
 ${BLOCK_END}`;
 
+// The guidance above now lives in the request_help tool description, which is
+// already in context whenever the tool is available. Managing a second copy in
+// the per-turn instruction files duplicated it at a cost paid every turn, so
+// the block is only ever removed now. INSTRUCTION_BODY is retained so an
+// existing block keeps a canonical form to be recognized and stripped.
+const MANAGE_INSTRUCTION_BLOCK = false;
+
 function atomicWrite(path, content, mode = 0o600) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -310,14 +317,14 @@ export function reconcile({
         );
       }
     }
-    validateInstruction(instructionPath(cli, home), enabled);
+    validateInstruction(instructionPath(cli, home), enabled && MANAGE_INSTRUCTION_BLOCK);
     if (dryRun) continue;
     if (entry && entryOwned(entry, { serverPath, legacyServerPath })) {
       if (available) removeEntry(cli);
       else removeEntryDirect(cli, home);
     }
     if (enabled) addEntry(cli, nodePath, serverPath);
-    manageInstruction(instructionPath(cli, home), enabled);
+    manageInstruction(instructionPath(cli, home), enabled && MANAGE_INSTRUCTION_BLOCK);
   }
 }
 

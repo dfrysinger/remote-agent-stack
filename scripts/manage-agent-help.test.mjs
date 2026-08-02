@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -108,4 +108,32 @@ test("removes owned entries directly when a previously selected CLI is unavailab
     readFileSync(join(home, ".codex", "config.toml"), "utf8"),
     /mcp_servers\.keep/,
   );
+});
+
+test("keeps instruction files free of the managed block while registering the tool", () => {
+  const home = mkdtempSync(join(tmpdir(), "agent-help-instructions-"));
+  const bin = join(home, "bin");
+  const serverPath = join(home, "server.mjs");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(home, ".copilot"), { recursive: true });
+  const stub = join(bin, "copilot");
+  writeFileSync(stub, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  chmodSync(stub, 0o755);
+
+  const instructions = join(home, ".copilot", "copilot-instructions.md");
+  writeFileSync(instructions, replaceManagedBlock("# Keep\n", true));
+  assert.equal(readFileSync(instructions, "utf8").includes(BLOCK_BEGIN), true);
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${bin}:${originalPath}`;
+  try {
+    reconcile({ selected: ["copilot"], nodePath: process.execPath, serverPath, home });
+  } finally {
+    process.env.PATH = originalPath;
+  }
+
+  const after = readFileSync(instructions, "utf8");
+  assert.equal(after.includes(BLOCK_BEGIN), false, "managed block must be stripped");
+  assert.equal(after.includes(BLOCK_END), false);
+  assert.match(after, /# Keep/, "unmanaged content must survive");
 });

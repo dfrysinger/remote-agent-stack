@@ -55,7 +55,9 @@ and configured port.
    plugin, and built-in entries do not establish ownership. A narrow migration
    recognizes the previous private Copilot path
    `~/.copilot/mcp-servers/agent-help/server.mjs`.
-6. The installer adds an equivalent managed instruction block to:
+6. The help guidance lives in the `request_help` tool description rather than a
+   managed instruction block, so it costs nothing per turn and cannot drift
+   from the tool. The installer removes any block it previously wrote from:
    - Copilot CLI: `~/.copilot/copilot-instructions.md`
    - Claude Code: `~/.claude/CLAUDE.md`
    - Codex CLI: `~/.codex/AGENTS.md`
