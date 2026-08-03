@@ -6,7 +6,7 @@
 #   - Homebrew (if missing)
 #   - tmux + tailscale (via brew)
 #   - /etc/resolver/ts.net (MagicDNS fix for Homebrew tailscaled)
-#   - copilot-agent wrapper symlinked into /usr/local/bin (also as `ca`)
+#   - remote-agent wrapper + descriptive backend aliases in /usr/local/bin
 #   - ss + vncfix GUI-access helpers symlinked into /usr/local/bin
 #   - ~/.tmux.conf managed block (hides the redundant tmux status bar)
 #
@@ -24,6 +24,7 @@ set -euo pipefail
 
 COPILOT_WORKSPACE_BASE_ARG=""
 CLAUDE_WORKSPACE_BASE_ARG=""
+CODEX_WORKSPACE_BASE_ARG=""
 AGENT_HELP_CLIS_ARG=""
 SKILLS_CLIS_ARG=""
 DREAMING_ARG=""
@@ -42,6 +43,8 @@ Options:
                                  (parent dir for agent-<name>/ subdirs).
   --claude-workspace-base  PATH  Where claude  agent workspaces live
                                  (parent dir for agent-<name>/ subdirs).
+  --codex-workspace-base   PATH  Where codex agent workspaces live
+                                 (parent dir for agent-<name>/ subdirs).
   --agent-help-clis LIST          Complete desired set of CLIs to configure:
                                  copilot,claude,codex or none.
   --skills-clis LIST              Complete desired set for dfrysinger-skills:
@@ -57,7 +60,7 @@ Options:
   --screen-sharing-port PORT     Tailscale Serve TCP port (default: 15900).
   --screen-sharing-hours HOURS   Automatic access lease, 1-8 (default: 1).
 
-  If either workspace flag is omitted, the installer auto-detects
+  If a workspace flag is omitted, the installer auto-detects
   Dropbox and prompts interactively with smart defaults.
 
   -h, --help                     Show this help and exit.
@@ -76,6 +79,11 @@ while [ $# -gt 0 ]; do
       CLAUDE_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
     --claude-workspace-base=*)
       CLAUDE_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
+    --codex-workspace-base)
+      [ $# -ge 2 ] || { echo "--codex-workspace-base requires a path" >&2; exit 2; }
+      CODEX_WORKSPACE_BASE_ARG="$2"; shift 2 ;;
+    --codex-workspace-base=*)
+      CODEX_WORKSPACE_BASE_ARG="${1#*=}"; shift ;;
     --agent-help-clis)
       [ $# -ge 2 ] || { echo "--agent-help-clis requires a list" >&2; exit 2; }
       AGENT_HELP_CLIS_ARG="$2"; shift 2 ;;
@@ -127,10 +135,7 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WRAPPER_SRC="$REPO_ROOT/bin/agent"
-WRAPPER_DST="/usr/local/bin/copilot-agent"
-WRAPPER_SHORT_DST="/usr/local/bin/ca"
-CLAUDE_WRAPPER_DST="/usr/local/bin/claude-agent"
-CLAUDE_WRAPPER_SHORT_DST="/usr/local/bin/cc"
+COMMAND_LINK_MANAGER="$REPO_ROOT/scripts/manage-command-links.sh"
 SS_SRC="$REPO_ROOT/bin/ss"
 SS_DST="/usr/local/bin/ss"
 VNCFIX_SRC="$REPO_ROOT/bin/vncfix"
@@ -188,6 +193,12 @@ if [ "$(uname)" != "Darwin" ]; then
   fail "This installer currently supports macOS only."
 fi
 ok "macOS detected ($(sw_vers -productVersion))"
+
+bash "$COMMAND_LINK_MANAGER" \
+  --mode check \
+  --wrapper "$WRAPPER_SRC" \
+  --bin-dir /usr/local/bin
+ok "agent command paths are ownership-safe"
 
 if [ "$(uname -m)" != "arm64" ]; then
   warn "Non-arm64 Mac detected — paths assume /opt/homebrew; expect bumps."
@@ -536,36 +547,21 @@ if [ ! -d /usr/local/bin ]; then
   NEED_USRLOCALBIN_MKDIR=true
 fi
 
-if [ -L "$WRAPPER_DST" ] && [ "$(readlink "$WRAPPER_DST")" = "$WRAPPER_SRC" ]; then
-  :  # already correct
-else
-  NEED_SYMLINK=true
-fi
-
-if [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ]; then
-  :  # already correct
-elif [ -e "$WRAPPER_SHORT_DST" ]; then
-  warn "$WRAPPER_SHORT_DST already exists (points elsewhere or is not ours) — leaving it alone (skipping 'ca' shortcut)"
-else
-  NEED_SYMLINK=true
-fi
-
-# Same collision-avoidance for the claude-agent long name and the 'cc' short
-# alias. All four names ('copilot-agent', 'ca', 'claude-agent', 'cc') point at
-# the same multi-call wrapper — backend is chosen from $0's basename inside
-# the script.
-for _dst in "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST"; do
+for _name in remote-agent copilot-agent claude-agent codex-agent; do
+  _dst="/usr/local/bin/$_name"
+  if ! { [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; }; then
+    NEED_SYMLINK=true
+  fi
+done
+for _name in ca cc co; do
+  _dst="/usr/local/bin/$_name"
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
-    :  # already correct
-  elif [ -e "$_dst" ]; then
-    warn "$_dst already exists (points elsewhere or is not ours) — leaving it alone (skipping $(basename "$_dst"))"
-  else
     NEED_SYMLINK=true
   fi
 done
 
 # GUI helpers (ss, vncfix) — linked into /usr/local/bin the same way as the
-# wrapper, with the same collision-avoidance as the 'ca' alias.
+# wrapper, with the same collision-avoidance as the agent commands.
 for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
   _src="${_pair%%:*}"; _dst="${_pair##*:}"
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; then
@@ -580,7 +576,7 @@ done
 # Ensure the wrapper + GUI helpers are executable (no sudo needed).
 chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC" "$SS_ROOT_SRC" \
   "$MCP_SRC/server.mjs" "$MCP_SRC/configure.mjs" "$MANAGE_AGENT_HELP" \
-  "$MANAGE_SKILLS_PLUGIN" "$MANAGE_DREAMING"
+  "$MANAGE_SKILLS_PLUGIN" "$MANAGE_DREAMING" "$COMMAND_LINK_MANAGER"
 
 if [ ! -f "$SS_ROOT_DST" ] || ! cmp -s "$SS_ROOT_SRC" "$SS_ROOT_DST" ||
    [ ! -f "$SS_EXPIRY_PLIST_DST" ] ||
@@ -604,8 +600,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
   $NEED_TAILSCALED_START   && echo "    • start tailscaled (brew services start tailscale)"
   $NEED_RESOLVER_WRITE     && echo "    • write $RESOLVER_DST (MagicDNS resolver)"
   $NEED_USRLOCALBIN_MKDIR  && echo "    • create /usr/local/bin"
-  $NEED_SYMLINK            && echo "    • symlink $WRAPPER_DST, $WRAPPER_SHORT_DST -> $WRAPPER_SRC"
-  $NEED_SYMLINK            && echo "    • symlink $CLAUDE_WRAPPER_DST, $CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC"
+  $NEED_SYMLINK            && echo "    • install remote-agent and three long aliases; retire owned ca/cc/co links"
   $NEED_SYMLINK            && echo "    • symlink $SS_DST, $VNCFIX_DST -> bin/{ss,vncfix}"
   $NEED_SCREEN_SHARING_INSTALL && echo "    • install bounded Screen Sharing helper, watchdog, and exact sudoers rules"
   echo
@@ -624,10 +619,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
   RESOLVER_SRC="$RESOLVER_SRC" \
   RESOLVER_DST="$RESOLVER_DST" \
   WRAPPER_SRC="$WRAPPER_SRC" \
-  WRAPPER_DST="$WRAPPER_DST" \
-  WRAPPER_SHORT_DST="$WRAPPER_SHORT_DST" \
-  CLAUDE_WRAPPER_DST="$CLAUDE_WRAPPER_DST" \
-  CLAUDE_WRAPPER_SHORT_DST="$CLAUDE_WRAPPER_SHORT_DST" \
+  COMMAND_LINK_MANAGER="$COMMAND_LINK_MANAGER" \
   SS_SRC="$SS_SRC" \
   SS_DST="$SS_DST" \
   VNCFIX_SRC="$VNCFIX_SRC" \
@@ -643,7 +635,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
   SCREEN_SHARING_PORT="$SCREEN_SHARING_PORT_RESOLVED" \
   TAILSCALE_BIN="$(command -v tailscale)" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,NEED_SCREEN_SHARING_INSTALL,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,WRAPPER_DST,WRAPPER_SHORT_DST,CLAUDE_WRAPPER_DST,CLAUDE_WRAPPER_SHORT_DST,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,SS_ROOT_SRC,SS_ROOT_DST,SS_ROOT_CONFIG,SS_EXPIRY_PLIST_SRC,SS_EXPIRY_PLIST_DST,SS_EXPIRY_LABEL,SS_SUDOERS_DST,INSTALL_USER,SCREEN_SHARING_PORT,TAILSCALE_BIN,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,NEED_SCREEN_SHARING_INSTALL,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,COMMAND_LINK_MANAGER,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,SS_ROOT_SRC,SS_ROOT_DST,SS_ROOT_CONFIG,SS_EXPIRY_PLIST_SRC,SS_EXPIRY_PLIST_DST,SS_EXPIRY_LABEL,SS_SUDOERS_DST,INSTALL_USER,SCREEN_SHARING_PORT,TAILSCALE_BIN,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -801,23 +793,12 @@ except Exception:
       launchctl bootstrap system "$SS_EXPIRY_PLIST_DST"
     fi
     if [ "$NEED_SYMLINK" = "true" ]; then
-      echo "  → symlinking $WRAPPER_DST"
-      rm -f "$WRAPPER_DST"
-      ln -s "$WRAPPER_SRC" "$WRAPPER_DST"
+      bash "$COMMAND_LINK_MANAGER" \
+        --mode install \
+        --wrapper "$WRAPPER_SRC" \
+        --bin-dir /usr/local/bin
 
-      # Short 'ca' alias + claude-agent names: only create/replace if absent,
-      # or already a symlink pointing at THIS wrapper. Leave any pre-existing
-      # real file OR foreign symlink alone (collision avoidance). All four
-      # names point at the same multi-call wrapper.
-      for _alias_dst in "$WRAPPER_SHORT_DST" "$CLAUDE_WRAPPER_DST" "$CLAUDE_WRAPPER_SHORT_DST"; do
-        if [ ! -e "$_alias_dst" ] || { [ -L "$_alias_dst" ] && [ "$(readlink "$_alias_dst")" = "$WRAPPER_SRC" ]; }; then
-          echo "  → symlinking $_alias_dst"
-          rm -f "$_alias_dst"
-          ln -s "$WRAPPER_SRC" "$_alias_dst"
-        fi
-      done
-
-      # GUI helpers (ss, vncfix): same collision-avoidance as the 'ca' alias.
+      # GUI helpers retain their own collision-avoidance rules.
       for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
         _src="${_pair%%:*}"; _dst="${_pair##*:}"
         if [ ! -e "$_dst" ] || { [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; }; then
@@ -832,10 +813,7 @@ PRIVILEGED_BLOCK
   $NEED_TAILSCALED_START   && ok "tailscaled started"   || true
   $NEED_RESOLVER_WRITE     && ok "$RESOLVER_DST written" || true
   $NEED_USRLOCALBIN_MKDIR  && ok "/usr/local/bin created" || true
-  $NEED_SYMLINK            && ok "$WRAPPER_DST -> $WRAPPER_SRC" || true
-  $NEED_SYMLINK            && [ -L "$WRAPPER_SHORT_DST" ] && [ "$(readlink "$WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
-  $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_DST -> $WRAPPER_SRC" || true
-  $NEED_SYMLINK            && [ -L "$CLAUDE_WRAPPER_SHORT_DST" ] && [ "$(readlink "$CLAUDE_WRAPPER_SHORT_DST")" = "$WRAPPER_SRC" ] && ok "$CLAUDE_WRAPPER_SHORT_DST -> $WRAPPER_SRC" || true
+  $NEED_SYMLINK            && ok "agent command links reconciled" || true
   $NEED_SYMLINK            && [ -L "$SS_DST" ] && [ "$(readlink "$SS_DST")" = "$SS_SRC" ] && ok "$SS_DST -> $SS_SRC" || true
   $NEED_SYMLINK            && [ -L "$VNCFIX_DST" ] && [ "$(readlink "$VNCFIX_DST")" = "$VNCFIX_SRC" ] && ok "$VNCFIX_DST -> $VNCFIX_SRC" || true
   $NEED_SCREEN_SHARING_INSTALL && ok "bounded Screen Sharing helper installed" || true
@@ -849,6 +827,7 @@ fi
 # AGENT_DIR_PREFIX-prefixed subdirs (default `agent-`):
 #   copilot: $COPILOT_WORKSPACE_BASE/agent-<name>
 #   claude : $CLAUDE_WORKSPACE_BASE/agent-<name>
+#   codex  : $CODEX_WORKSPACE_BASE/agent-<name>
 
 bold "Workspace bases"
 
@@ -866,6 +845,7 @@ _read_config_var() {
 
 EXISTING_COPILOT_WORKSPACE_BASE="$(_read_config_var COPILOT_WORKSPACE_BASE)"
 EXISTING_CLAUDE_WORKSPACE_BASE="$(_read_config_var CLAUDE_WORKSPACE_BASE)"
+EXISTING_CODEX_WORKSPACE_BASE="$(_read_config_var CODEX_WORKSPACE_BASE)"
 EXISTING_LEGACY_WORKSPACE_BASE="$(_read_config_var WORKSPACE_BASE)"
 
 if [ -z "$EXISTING_COPILOT_WORKSPACE_BASE" ] && [ -n "$EXISTING_LEGACY_WORKSPACE_BASE" ]; then
@@ -876,10 +856,12 @@ fi
 if [ -d "$HOME/Library/CloudStorage/Dropbox" ]; then
   COPILOT_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/copilot-workspace"
   CLAUDE_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/claude-workspace"
+  CODEX_SMART_DEFAULT="$HOME/Library/CloudStorage/Dropbox/codex-workspace"
   SMART_DEFAULT_REASON="Dropbox detected — workspaces will sync across Macs"
 else
   COPILOT_SMART_DEFAULT="$HOME/copilot-workspace"
   CLAUDE_SMART_DEFAULT="$HOME/claude-workspace"
+  CODEX_SMART_DEFAULT="$HOME/codex-workspace"
   SMART_DEFAULT_REASON="no Dropbox found"
 fi
 
@@ -923,10 +905,14 @@ _resolve_workspace_base claude "$CLAUDE_WORKSPACE_BASE_ARG" \
   "$EXISTING_CLAUDE_WORKSPACE_BASE" "$CLAUDE_SMART_DEFAULT"
 CLAUDE_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
 
+_resolve_workspace_base codex "$CODEX_WORKSPACE_BASE_ARG" \
+  "$EXISTING_CODEX_WORKSPACE_BASE" "$CODEX_SMART_DEFAULT"
+CODEX_WORKSPACE_BASE_RESOLVED="$RESOLVED_WS"
+
 # ---- mailbox integration prompt -------------------------------------------
 #
 # The optional dfrysinger-skills `mailbox` skill lets one named agent send
-# messages/files to another (e.g., handoffs). When enabled, the ca wrapper
+# messages/files to another (e.g., handoffs). When enabled, the agent wrapper
 # auto-pokes the recipient's tmux pane on attach + new-session if there is
 # pending mail. Off by default; opt-in here.
 
@@ -963,7 +949,7 @@ if [ -n "$EXISTING_MAILBOX_INTEGRATION" ]; then
   MAILBOX_INTEGRATION_RESOLVED="$EXISTING_MAILBOX_INTEGRATION"
   ok "keeping existing config: MAILBOX_INTEGRATION=$MAILBOX_INTEGRATION_RESOLVED"
 elif [ -t 0 ] && [ -t 1 ]; then
-  echo "    Enable mailbox integration in the ca wrapper?"
+  echo "    Enable mailbox integration in the agent wrapper?"
   echo "    (cross-session message/file handoff between named agents)"
   echo "    Default: $MAILBOX_DEFAULT  ($MAILBOX_DEFAULT_REASON)"
   printf "    Enable? [y/N, default %s]: " "$MAILBOX_DEFAULT"
@@ -984,7 +970,7 @@ fi
 
 # ---- allow-all prompt -----------------------------------------------------
 #
-# When enabled, ca passes --allow-all to copilot on new-session launch
+# When enabled, the wrapper passes the backend-specific allow-all flag
 # (--allow-all-tools + --allow-all-paths + --allow-all-urls). Reasonable
 # for a personal-machine, named-agent workflow where the human is steering;
 # NOT recommended for shared/CI environments. Off by default.
@@ -1009,7 +995,7 @@ if [ -n "$EXISTING_ALLOW_ALL" ]; then
   ALLOW_ALL_RESOLVED="$EXISTING_ALLOW_ALL"
   ok "keeping existing config: ALLOW_ALL=$ALLOW_ALL_RESOLVED"
 elif [ -t 0 ] && [ -t 1 ]; then
-  echo "    Pass --allow-all to copilot on every ca launch?"
+  echo "    Skip permission prompts on every agent launch?"
   echo "    (auto-approves all tools, paths, and URLs — skip per-call prompts)"
   echo "    Recommended only on personal machines where you steer the agent."
   printf "    Enable? [y/N]: "
@@ -1029,24 +1015,27 @@ bold "Configuration"
 
 mkdir -p "$CONFIG_DIR"
 
-# Always (re-)write the config so both workspace bases match what we resolved.
+# Always (re-)write the config so all workspace bases match what we resolved.
 # COPILOT_BIN and AGENT_DIR_PREFIX stay as commented defaults — the wrapper
 # falls back to its own defaults if they're absent.
 cat > "$CONFIG_DIR/config" <<EOF
 # remote-agent-stack — agent wrapper config
 # Re-generated by install.sh; safe to edit by hand.
 #
-# One wrapper (bin/agent) serves two backends, chosen by invocation name:
-#   copilot-agent / ca  -> Copilot CLI      (workspace: \$COPILOT_WORKSPACE_BASE/agent-<Name>)
-#   claude-agent  / cc  -> Claude Code CLI  (workspace: \$CLAUDE_WORKSPACE_BASE/agent-<Name>)
+# One wrapper (bin/agent) serves three backends:
+#   remote-agent copilot <Name> or copilot-agent <Name>
+#   remote-agent claude  <Name> or claude-agent <Name>
+#   remote-agent codex   <Name> or codex-agent <Name>
 
 # Where each backend's agent working directories live.
 COPILOT_WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE_RESOLVED"
 CLAUDE_WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE_RESOLVED"
+CODEX_WORKSPACE_BASE="$CODEX_WORKSPACE_BASE_RESOLVED"
 
 # Backend CLI binaries (must be in PATH). Uncomment to override.
 # COPILOT_BIN="copilot"
 # CLAUDE_BIN="claude"
+# CODEX_BIN="codex"
 
 # AGENT_DIR_PREFIX: prefix for per-agent working directories under each
 # backend's workspace root. Uncomment to override.
@@ -1059,7 +1048,9 @@ CLAUDE_WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE_RESOLVED"
 MAILBOX_INTEGRATION="$MAILBOX_INTEGRATION_RESOLVED"
 
 # ALLOW_ALL: when "true", the wrapper skips permission prompts on
-# new-session launch (copilot: --allow-all; claude: --dangerously-skip-permissions).
+# new-session launch (copilot: --allow-all; claude:
+# --dangerously-skip-permissions; codex:
+# --dangerously-bypass-approvals-and-sandbox).
 # Personal-machine convenience; do NOT enable in shared environments.
 ALLOW_ALL="$ALLOW_ALL_RESOLVED"
 
@@ -1150,7 +1141,7 @@ if [ "$EXISTING_LAUNCHAGENT" = "yes" ]; then
   ok "keeping existing LaunchAgent: $LAUNCHAGENT_DST"
   INSTALL_LAUNCHAGENT="true"  # so we still re-stamp the script path / reload below
 elif [ -t 0 ] && [ -t 1 ]; then
-  echo "    Without this, the first \`ca <name>\` after a reboot bootstraps the"
+  echo "    Without this, the first \`remote-agent <backend> <name>\` after a reboot bootstraps the"
   echo "    tmux server from your SSH login shell, which inherits a restricted"
   echo "    keychain context. Result: \`gh\`, the osxkeychain git helper, and"
   echo "    anything else that reads the login keychain silently fail inside"
@@ -1234,7 +1225,7 @@ if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
     echo "      2. From any shell: tmux kill-server"
     echo "         (the watchdog will refire the bootstrap script within"
     echo "          a few seconds and the new server will be GUI-context)"
-    echo "      3. Re-attach your named agents: ca alpha, ca bravo, ..."
+    echo "      3. Re-attach your named agents: remote-agent copilot alpha, remote-agent claude bravo, ..."
     echo "    Each Copilot session resumes by UUID (no conversation lost)."
   fi
 fi
@@ -1297,7 +1288,7 @@ fi
 
 # ---- Backend CLI detection -------------------------------------------------
 #
-# Both backends are optional at install time — the wrapper enforces
+# All backends are optional at install time — the wrapper enforces
 # "backend binary must be in PATH" at launch. Install only the ones you
 # actually plan to use.
 
@@ -1306,21 +1297,21 @@ bold "Backend CLIs"
 if have copilot; then
   ok "copilot CLI found ($(copilot --version 2>&1 | head -1))"
 else
-  warn "copilot CLI not found in PATH — 'ca' / 'copilot-agent' will error until installed."
+  warn "copilot CLI not found in PATH — 'remote-agent copilot' / 'copilot-agent' will error until installed."
   echo "    Install per https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli"
 fi
 
 if have claude; then
   ok "claude CLI found ($(claude --version 2>&1 | head -1))"
 else
-  warn "claude CLI not found in PATH — 'cc' / 'claude-agent' will error until installed."
+  warn "claude CLI not found in PATH — 'remote-agent claude' / 'claude-agent' will error until installed."
   echo "    Install per https://docs.claude.com/en/docs/claude-code/quickstart"
 fi
 
 if have codex; then
   ok "codex CLI found ($(codex --version 2>&1 | head -1))"
 else
-  warn "codex CLI not found in PATH — it cannot be selected for request_help until installed."
+  warn "codex CLI not found in PATH — 'remote-agent codex' / 'codex-agent' will error until installed."
 fi
 
 # ---- shared skills plugin --------------------------------------------------
@@ -1410,8 +1401,9 @@ cat <<MANUAL
      login flow.
 
   4. Test:
-       ca alpha    # copilot backend, cwd \$COPILOT_WORKSPACE_BASE/agent-alpha
-       cc alpha    # claude  backend, cwd \$CLAUDE_WORKSPACE_BASE/agent-alpha
+       remote-agent copilot alpha
+       remote-agent claude alpha
+       remote-agent codex alpha
        ss on 1     # prints a clickable Screens URL; no password prompt
 
      Restart each CLI selected for agent help, then ask it to list MCP
@@ -1423,8 +1415,8 @@ cat <<MANUAL
      list. It should report \`dfrysinger-skills\`.
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
-       ca alpha    # or: cc alpha
-       ca bravo
+       remote-agent copilot alpha
+       remote-agent claude bravo
        ...
 
   See README.md for the full Termius walkthrough (iOS hosts + Mac

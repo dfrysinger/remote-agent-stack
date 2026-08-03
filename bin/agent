@@ -1,48 +1,119 @@
 #!/usr/bin/env bash
-# agent — launch or attach to a named agent session (Copilot or Claude Code)
+# agent — launch or attach to a named Copilot, Claude, or Codex session
 #
-# This is a multi-call script: the backend (Copilot CLI vs Claude Code CLI)
-# is chosen by the name it's invoked as. install.sh symlinks four names in
-# /usr/local/bin:
-#   copilot-agent  (or ca)  → Copilot CLI backend
-#   claude-agent   (or cc)  → Claude Code CLI backend
+# The canonical command selects a backend explicitly. The three long aliases
+# select it from their invocation name:
+#   remote-agent <copilot|claude|codex> <name>
+#   copilot-agent <name>
+#   claude-agent <name>
+#   codex-agent <name>
 #
-# Usage:
-#   copilot-agent <name>      (or: ca <name>)
-#   claude-agent  <name>      (or: cc <name>)
-#
-# Layout: each backend has its own workspace root; inside each, agents
-# live in AGENT_DIR_PREFIX-prefixed subdirs so they're easy to spot as
-# agent workspaces alongside other project dirs:
-#   copilot: $COPILOT_WORKSPACE_BASE/agent-<name>   (tmux session: <name>)
-#   claude : $CLAUDE_WORKSPACE_BASE/agent-<name>    (tmux session: claude-<name>)
-#
-# The claude tmux session name is prefixed only so `ca alpha` and `cc alpha`
-# can coexist on the same tmux server without collision.
+# Each backend has a separate workspace root and tmux namespace.
 #
 # Configuration (env or ~/.config/remote-agent-stack/config):
 #   COPILOT_WORKSPACE_BASE   default: ~/Library/CloudStorage/Dropbox/copilot-workspace
 #   CLAUDE_WORKSPACE_BASE    default: ~/Library/CloudStorage/Dropbox/claude-workspace
+#   CODEX_WORKSPACE_BASE     default: ~/Library/CloudStorage/Dropbox/codex-workspace
 #   COPILOT_BIN              default: copilot
 #   CLAUDE_BIN               default: claude
+#   CODEX_BIN                default: codex
 #   AGENT_DIR_PREFIX         default: agent-
 #   ALLOW_ALL                default: false
 #     copilot: --allow-all
 #     claude : --dangerously-skip-permissions
+#     codex  : --dangerously-bypass-approvals-and-sandbox
 #   MAILBOX_INTEGRATION      default: false
 #   SESSION_WARN_MB          default: 300  (copilot only; 0 disables)
 #     Offer to retire a session whose event log has grown past this size.
 
 set -euo pipefail
 
-# ---- backend dispatch ------------------------------------------------------
+# ---- backend dispatch + args -----------------------------------------------
 
-case "$(basename "$0")" in
-  ca|copilot-agent) BACKEND="copilot" ;;
-  cc|claude-agent)  BACKEND="claude" ;;
-  agent)            BACKEND="copilot" ;;  # fallback for direct invocation
-  *)                BACKEND="copilot" ;;
+INVOCATION="$(basename "$0")"
+
+usage_global() {
+  cat <<USAGE
+Usage: $INVOCATION <copilot|claude|codex> <Name>
+  Launch or reattach to a named agent session.
+
+Examples:
+  $INVOCATION copilot alpha
+  $INVOCATION claude alpha
+  $INVOCATION codex alpha
+
+Options:
+  -h, --help   Show this help and exit.
+USAGE
+}
+
+usage_backend() {
+  local command
+  if [ "$INVOCATION" = "remote-agent" ] || [ "$INVOCATION" = "agent" ]; then
+    command="$INVOCATION $BACKEND"
+  else
+    command="$INVOCATION"
+  fi
+  cat <<USAGE
+Usage: $command <Name>
+  Launch or reattach to a named $BACKEND agent session.
+
+  Example: $command alpha
+
+Options:
+  -h, --help   Show this help and exit.
+
+Config:
+  ~/.config/remote-agent-stack/config
+  Env: COPILOT_WORKSPACE_BASE, CLAUDE_WORKSPACE_BASE, CODEX_WORKSPACE_BASE,
+       COPILOT_BIN, CLAUDE_BIN, CODEX_BIN, AGENT_DIR_PREFIX, ALLOW_ALL,
+       MAILBOX_INTEGRATION
+USAGE
+}
+
+case "$INVOCATION" in
+  remote-agent|agent)
+    case "${1:-}" in
+      -h|--help)
+        [ $# -eq 1 ] || { usage_global >&2; exit 2; }
+        usage_global
+        exit 0
+        ;;
+      copilot|claude|codex)
+        BACKEND="$1"
+        shift
+        ;;
+      *)
+        usage_global >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  copilot-agent) BACKEND="copilot" ;;
+  claude-agent)  BACKEND="claude" ;;
+  codex-agent)   BACKEND="codex" ;;
+  *)
+    echo "Unsupported invocation name: $INVOCATION" >&2
+    usage_global >&2
+    exit 2
+    ;;
 esac
+
+case "${1:-}" in
+  -h|--help)
+    [ $# -eq 1 ] || { usage_backend >&2; exit 2; }
+    usage_backend
+    exit 0
+    ;;
+esac
+
+if [ $# -ne 1 ] || [ -z "${1:-}" ] || [ "${1#-}" != "$1" ] ||
+   [ "${1#*/}" != "$1" ]; then
+  usage_backend >&2
+  exit 2
+fi
+
+NAME="$1"
 
 # ---- config ----------------------------------------------------------------
 
@@ -62,8 +133,10 @@ fi
 
 : "${COPILOT_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/copilot-workspace}"
 : "${CLAUDE_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/claude-workspace}"
+: "${CODEX_WORKSPACE_BASE:=$HOME/Library/CloudStorage/Dropbox/codex-workspace}"
 : "${COPILOT_BIN:=copilot}"
 : "${CLAUDE_BIN:=claude}"
+: "${CODEX_BIN:=codex}"
 : "${AGENT_DIR_PREFIX:=agent-}"
 : "${SESSION_WARN_MB:=300}"
 
@@ -71,46 +144,20 @@ case "$BACKEND" in
   copilot)
     AGENT_BIN="$COPILOT_BIN"
     WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE"
-    SESSION_PREFIX=""
+    SESSION_PREFIX="copilot-"
     ;;
   claude)
     AGENT_BIN="$CLAUDE_BIN"
     WORKSPACE_BASE="$CLAUDE_WORKSPACE_BASE"
     SESSION_PREFIX="claude-"
     ;;
+  codex)
+    AGENT_BIN="$CODEX_BIN"
+    WORKSPACE_BASE="$CODEX_WORKSPACE_BASE"
+    SESSION_PREFIX="codex-"
+    ;;
 esac
 
-# ---- args ------------------------------------------------------------------
-
-usage() {
-  local invocation
-  invocation="$(basename "$0")"
-  cat <<USAGE
-Usage: $invocation <Name>
-  Launch or reattach to a named $BACKEND agent session.
-
-  Example: $invocation alpha
-
-Options:
-  -h, --help   Show this help and exit.
-
-Config:
-  ~/.config/remote-agent-stack/config
-  Env: COPILOT_WORKSPACE_BASE, CLAUDE_WORKSPACE_BASE, COPILOT_BIN,
-       CLAUDE_BIN, AGENT_DIR_PREFIX, ALLOW_ALL, MAILBOX_INTEGRATION
-USAGE
-}
-
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-esac
-
-if [ $# -ne 1 ] || [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
-  usage >&2
-  exit 2
-fi
-
-NAME="$1"
 DIR="$WORKSPACE_BASE/${AGENT_DIR_PREFIX}${NAME}"
 SESSION="${SESSION_PREFIX}${NAME}"
 
@@ -193,23 +240,58 @@ inside_tmux() {
 # once nobody drains it.
 require_terminal() {
   if [ ! -t 0 ] || [ ! -t 1 ]; then
-    echo "ca: refusing to attach '$SESSION' without a terminal." >&2
-    echo "ca: this would wedge the tmux server. Run it from an interactive" >&2
-    echo "ca: shell, or inspect the session with:" >&2
-    echo "ca:   tmux capture-pane -p -t $SESSION" >&2
+    echo "remote-agent: refusing to attach '$SESSION' without a terminal." >&2
+    echo "remote-agent: this would wedge the tmux server. Run it from an interactive" >&2
+    echo "remote-agent: shell, or inspect the session with:" >&2
+    echo "remote-agent:   tmux capture-pane -p -t $SESSION" >&2
     exit 1
   fi
 }
 
+# Resolve an existing directory through symlinks and platform aliases.
+physical_path() {
+  [ -n "${1:-}" ] || return 1
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+
+session_matches_workspace() {
+  local session="$1" session_path expected_path actual_path
+  session_path="$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null)" ||
+    return 1
+  [ -n "$session_path" ] || return 1
+  expected_path="$(physical_path "$DIR")" || return 1
+  actual_path="$(physical_path "$session_path")" || return 1
+  [ "$actual_path" = "$expected_path" ]
+}
+
+refuse_mismatched_session() {
+  local session="$1" session_path expected_path actual_path
+  session_path="$(tmux display-message -p -t "=$session:" '#{session_path}' 2>/dev/null || true)"
+  expected_path="$(physical_path "$DIR" 2>/dev/null || printf '%s' "$DIR")"
+  actual_path="$(physical_path "$session_path" 2>/dev/null || printf '%s' "${session_path:-unknown}")"
+  echo "tmux session '$session' belongs to another workspace." >&2
+  echo "  session workspace: $actual_path" >&2
+  echo "  expected workspace: $expected_path" >&2
+  echo "Choose another name, or explicitly remove or rename the conflicting tmux session." >&2
+  exit 1
+}
+
 # ---- attach if session exists ---------------------------------------------
 
-if tmux has-session -t "$SESSION" 2>/dev/null; then
+if [ "$BACKEND" = "copilot" ] && tmux has-session -t "=$NAME" 2>/dev/null; then
+  if session_matches_workspace "$NAME"; then
+    SESSION="$NAME"
+  fi
+fi
+
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
+  session_matches_workspace "$SESSION" || refuse_mismatched_session "$SESSION"
   [ -n "$MAILBOX_POKE" ] && ( "$MAILBOX_POKE" "$SESSION" ) &
   if inside_tmux; then
-    exec tmux switch-client -t "$SESSION"
+    exec tmux switch-client -t "=$SESSION"
   fi
   require_terminal
-  exec tmux attach -t "$SESSION"
+  exec tmux attach -t "=$SESSION"
 fi
 
 # ---- new session -----------------------------------------------------------
@@ -364,6 +446,47 @@ case "$BACKEND" in
     fi
     if [ "${ALLOW_ALL:-false}" = "true" ]; then
       CMD="$CMD --dangerously-skip-permissions"
+    fi
+    ;;
+
+  codex)
+    HAS_SESSION=false
+    CODEX_SESSIONS_DIR="$HOME/.codex/sessions"
+    if [ -d "$CODEX_SESSIONS_DIR" ] &&
+       python3 - "$CODEX_SESSIONS_DIR" "$DIR" <<'PY'
+import json
+import os
+import sys
+
+root, expected_cwd = sys.argv[1:]
+for directory, _, files in os.walk(root):
+    for filename in files:
+        if not filename.endswith(".jsonl"):
+            continue
+        path = os.path.join(directory, filename)
+        try:
+            with open(path, encoding="utf-8") as stream:
+                record = json.loads(stream.readline())
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        payload = record.get("payload") if isinstance(record, dict) else None
+        cwd = payload.get("cwd") if isinstance(payload, dict) else None
+        if cwd is None and isinstance(record, dict):
+            cwd = record.get("cwd")
+        if cwd == expected_cwd:
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+    then
+      HAS_SESSION=true
+    fi
+
+    CMD="$AGENT_BIN"
+    if [ "$HAS_SESSION" = "true" ]; then
+      CMD="$CMD resume --last"
+    fi
+    if [ "${ALLOW_ALL:-false}" = "true" ]; then
+      CMD="$CMD --dangerously-bypass-approvals-and-sandbox"
     fi
     ;;
 esac
