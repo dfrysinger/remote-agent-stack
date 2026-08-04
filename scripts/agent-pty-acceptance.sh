@@ -21,6 +21,7 @@ mkdir -p "$BIN_DIR" "$HOME_DIR" "$TMUX_TMPDIR"
 bash "$ROOT/scripts/manage-command-links.sh" \
   --mode install \
   --wrapper "$ROOT/bin/agent" \
+  --screen-wrapper "$ROOT/bin/agent-screen" \
   --bin-dir "$BIN_DIR" >/dev/null
 
 REAL_TMUX="$(command -v tmux)"
@@ -60,7 +61,7 @@ run_candidate() {
 
 for backend in copilot claude codex; do
   : > "$LOG"
-  run_candidate "$BIN_DIR/remote-agent" "$backend" pty
+  run_candidate "$BIN_DIR/agent-stack" "$backend" pty
   canonical="$(cat "$LOG")"
   case "$canonical" in
     "$backend|$TMP/$backend-workspace/agent-pty|"*) ;;
@@ -80,16 +81,16 @@ done
 cat > "$BIN_DIR/hold-session" <<'HOLD'
 #!/usr/bin/env bash
 printf 'reattach|%s|%s\n' "$(tmux display-message -p '#S')" "$PWD" >> "$ACCEPT_LOG"
-sleep 1
+sleep 5
 HOLD
 chmod +x "$BIN_DIR/hold-session"
 
 : > "$LOG"
 mkdir -p "$CLAUDE_BASE/agent-reattach"
-TERM=xterm-256color TMUX_TMPDIR="$TMUX_TMPDIR" ACCEPT_LOG="$LOG" \
+env -u TMUX TERM=xterm-256color TMUX_TMPDIR="$TMUX_TMPDIR" ACCEPT_LOG="$LOG" \
   "$REAL_TMUX" new-session -d -s claude-reattach \
   -c "$CLAUDE_BASE/agent-reattach" "$BIN_DIR/hold-session"
-run_candidate "$BIN_DIR/remote-agent" claude reattach
+run_candidate "$BIN_DIR/agent-stack" claude reattach
 grep -Fq "reattach|claude-reattach|$CLAUDE_BASE/agent-reattach" "$LOG"
 if grep -Fq 'claude|' "$LOG"; then
   echo "reattach unexpectedly launched a second Claude backend" >&2
@@ -99,10 +100,10 @@ echo "PTY PASS: existing prefixed session reattached by physical workspace"
 
 : > "$LOG"
 mkdir -p "$COPILOT_BASE/agent-legacy"
-TERM=xterm-256color TMUX_TMPDIR="$TMUX_TMPDIR" ACCEPT_LOG="$LOG" \
+env -u TMUX TERM=xterm-256color TMUX_TMPDIR="$TMUX_TMPDIR" ACCEPT_LOG="$LOG" \
   "$REAL_TMUX" new-session -d -s legacy \
   -c "$COPILOT_BASE/agent-legacy" "$BIN_DIR/hold-session"
-run_candidate "$BIN_DIR/remote-agent" copilot legacy
+run_candidate "$BIN_DIR/agent-stack" copilot legacy
 grep -Fq "reattach|legacy|$COPILOT_BASE/agent-legacy" "$LOG"
 if grep -Fq 'copilot|' "$LOG"; then
   echo "legacy reattach unexpectedly launched a prefixed Copilot session" >&2
@@ -110,10 +111,10 @@ if grep -Fq 'copilot|' "$LOG"; then
 fi
 echo "PTY PASS: matching legacy Copilot session reattached"
 
-run_candidate "$BIN_DIR/remote-agent" --help | grep -q 'remote-agent <copilot|claude|codex> <Name>'
+run_candidate "$BIN_DIR/agent-stack" --help | grep -q 'agent-stack <copilot|claude|codex> <Name>'
 for backend in copilot claude codex; do
-  run_candidate "$BIN_DIR/remote-agent" "$backend" --help |
-    grep -q "remote-agent $backend <Name>"
+  run_candidate "$BIN_DIR/agent-stack" "$backend" --help |
+    grep -q "agent-stack $backend <Name>"
   run_candidate "$BIN_DIR/$backend-agent" --help |
     grep -q "$backend-agent <Name>"
 done

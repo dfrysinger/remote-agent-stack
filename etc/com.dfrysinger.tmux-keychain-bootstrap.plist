@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  remote-agent-stack tmux keychain bootstrap LaunchAgent.
+  Agent Stack tmux keychain bootstrap LaunchAgent.
 
   Installed into ~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist
   by install.sh. Two placeholders are substituted at install time:
@@ -10,7 +10,7 @@
 
   Loaded under the user's GUI/Aqua login session (gui/<uid>) so the tmux
   server it spawns inherits the full login-keychain search list. Without
-  this, the first `ca <name>` call after a reboot bootstraps the tmux
+  this, the first `agent-stack <backend> <name>` call after a reboot bootstraps the tmux
   server from the SSH login shell instead, and every subsequent session
   inside that server is keychain-restricted — see the script's header
   comment for the full story.

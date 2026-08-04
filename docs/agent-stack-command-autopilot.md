@@ -1,7 +1,7 @@
 # Remote Agent Command Autopilot Charter
 
 Keep building against the reviewed plan at
-`docs/remote-agent-command-design.md` in
+`docs/agent-stack-command-design.md` in
 `/Users/dfrysinger/code/remote-agent-stack`. Follow the required process
 skills below. Use rubber-duck to brainstorm solutions and align on paths
 forward whenever you get stuck. Keep the design's implementation baton current
@@ -9,7 +9,7 @@ so a future agent can pick it up. Use subagents when independent work genuinely
 benefits from a separate context. Do not push; keep working locally for this
 run. Decide every reversible question yourself with rubber-duck rather than
 asking the user. Stay on this course until the objective's Definition of Done
-(the "Definition of Done" section in `docs/remote-agent-command-design.md`) is
+(the "Definition of Done" section in `docs/agent-stack-command-design.md`) is
 met.
 
 ## Required process skills
@@ -28,8 +28,8 @@ met.
 
 ## Objective
 
-Achieve the Definition of Done in `docs/remote-agent-command-design.md`, the
-"Definition of Done" section: ship the collision-safe `remote-agent` command,
+Achieve the Definition of Done in `docs/agent-stack-command-design.md`, the
+"Definition of Done" section: ship the collision-safe `agent-stack` command,
 three descriptive backend aliases, Codex support, ownership-safe
 installation/removal, documentation, deterministic tests, and real PTY
 acceptance. Keep working through the plan; finish only once every item in the

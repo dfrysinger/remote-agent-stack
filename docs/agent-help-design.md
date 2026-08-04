@@ -24,7 +24,8 @@ and configured port.
   `${XDG_CONFIG_HOME:-$HOME/.config}/remote-agent-stack/agent-help/`.
 - Use each CLI's supported user-level MCP command instead of hand-editing its
   private configuration format.
-- Reuse the existing `ss` command for Tailscale forwarding and lease handling.
+- Reuse the existing Screen Sharing lease implementation through the
+  `agent-screen` command.
 - Preserve existing global instruction files by replacing only a marked
   `remote-agent-stack` block.
 - Keep privileged operations in the installer's existing single-sudo phase.
@@ -71,7 +72,7 @@ and configured port.
 
 ## Screen Sharing privilege boundary
 
-The user-facing `ss` script owns:
+The user-facing `agent-screen` script owns:
 
 - validating the requested lease duration and configured port;
 - deriving the current Tailscale DNS hostname and Screens URL;
@@ -147,7 +148,8 @@ A missing or invalid Tailscale DNS name omits remote-access advertising.
 - Screen Sharing enablement or URL-validation failure prevents the message from
   being sent and consumes the reservation so repeated helper failures remain
   rate-limited. If Messages rejects a message after access was enabled, the
-  server invokes `ss off` only when this request created the lease. If a prior
+  server invokes `agent-screen off` only when this request created the lease.
+  If a prior
   managed/manual lease was already active, it leaves that lease to its
   root-enforced deadline.
 - Every external command has a bounded timeout. Enablement and Messages
@@ -184,7 +186,8 @@ A missing or invalid Tailscale DNS name omits remote-access advertising.
   configuration, corrupt-state failure, deduplication, concurrent rate limits,
   and send-failure semantics.
 - Server tests use injected command runners to prove the tmux identity cannot
-  be replaced by caller input, remote access is advertised only after `ss on`
+  be replaced by caller input, remote access is advertised only after
+  `agent-screen on`
   succeeds, a failed send tears down only a newly created lease, and a daemon
   tick before the expiry leaves the lease active.
 - Shell tests exercise CLI-list parsing and desired-set transitions, malformed

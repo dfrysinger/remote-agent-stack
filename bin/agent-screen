@@ -106,7 +106,7 @@ case "$COMMAND" in
   on)
     case "$HOURS" in
       1|2|3|4|5|6|7|8) ;;
-      *) echo "Usage: ss on [1-8] [--json]" >&2; exit 2 ;;
+      *) echo "Usage: agent-screen on [1-8] [--json]" >&2; exit 2 ;;
     esac
     HOSTNAME="$(tailscale_hostname)" || {
       echo "Could not resolve this machine's Tailscale DNS name; Screen Sharing was not enabled." >&2
@@ -149,7 +149,7 @@ case "$COMMAND" in
       OFF_AT="$(date -r "$EXPIRY" '+%Y-%m-%d %H:%M:%S')"
       echo "Screen Sharing is ON until $OFF_AT."
       echo "Open: $URL"
-      echo "Force off: ss off"
+      echo "Force off: agent-screen off"
     fi
     CLEANUP_ON_FAILURE=false
     trap - EXIT
@@ -211,7 +211,7 @@ case "$COMMAND" in
     fi
     ;;
   *)
-    echo "Usage: ss {on [1-8] [--json] | off [--json] | status [--json]}" >&2
+    echo "Usage: agent-screen {on [1-8] [--json] | off [--json] | status [--json]}" >&2
     exit 2
     ;;
 esac

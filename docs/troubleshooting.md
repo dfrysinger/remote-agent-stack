@@ -142,7 +142,7 @@ keychain is small; the operational benefit is large.
 
 ### Claude Code: authentication on first launch inside tmux
 
-The first `cc <name>` opens Claude Code's in-terminal login flow. Follow
+The first `agent-stack claude <name>` opens Claude Code's in-terminal login flow. Follow
 the prompts to sign in; the token lands under `~/.claude/` and
 subsequent launches reuse it. If auth silently fails, the most common
 cause is the same PATH issue as Copilot below — `claude` isn't on the
@@ -201,8 +201,8 @@ Termius's iOS clipboard handler occasionally injects `^@` (null) bytes
 into pasted content. Symptom is commands silently failing or only
 running the first line of a heredoc.
 
-This was the original motivation for replacing the multi-line shell
-snippet with the single-line wrapper (`ca <Name>` or `cc <Name>`). If
+Use the single-line wrapper (`agent-stack <backend> <Name>`) instead of
+multi-line shell snippets. If
 you still need to paste something multi-line from your phone, put it
 in a text file (TextEdit, Dropbox-synced) and `cat` it on the Mac
 instead.

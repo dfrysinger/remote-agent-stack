@@ -8,7 +8,8 @@
 # Why: macOS gives the login keychain in a process's searchable keychain
 # list only to processes spawned inside the user's GUI/Aqua login session.
 # A tmux server bootstrapped from a non-GUI context (typically the SSH
-# login shell behind the very first `ca <name>` call after a reboot) is
+# login shell behind the first `agent-stack <backend> <name>` call after a
+# reboot) is
 # stuck with the restricted "system keychain only" search list, and every
 # shell inside that server inherits the same restriction. The visible
 # symptom is that `gh`, the `osxkeychain` git credential helper, and

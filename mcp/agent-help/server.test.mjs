@@ -43,13 +43,13 @@ async function withServer(
     },
     join(configRoot, "agent-help", "config.json"),
   );
-  const ss = join(directory, "ss");
+  const screenSharing = join(directory, "agent-screen");
   const osascript = join(directory, "osascript");
   const tmux = join(directory, "tmux");
   const body = join(directory, "message-body");
   executable(
-    ss,
-    `printf 'ss %s\\n' "$*" >> ${JSON.stringify(log)}
+    screenSharing,
+    `printf 'agent-screen %s\\n' "$*" >> ${JSON.stringify(log)}
 if [ "\${1:-}" = on ]; then
   ${screenSharingFails ? "exit 1" : ""}
   ${
@@ -77,7 +77,7 @@ ${sendFails ? "exit 1" : "exit 0"}`,
     env: {
       ...process.env,
       REMOTE_AGENT_STACK_CONFIG_DIR: configRoot,
-      AGENT_HELP_SS_COMMAND: ss,
+      AGENT_HELP_SCREEN_SHARING_COMMAND: screenSharing,
       AGENT_HELP_OSASCRIPT_COMMAND: osascript,
       ...(tmuxName === null
         ? {}
@@ -108,7 +108,7 @@ test("lists request_help and advertises remote access after successful enablemen
     });
     assert.match(result.content[0].text, /temporary Screen Sharing is available/);
     assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
-      "ss on 1 --json",
+      "agent-screen on 1 --json",
       "message",
     ]);
   });
@@ -125,9 +125,9 @@ test("failed send tears down only a lease created by that request", async () => 
         }),
       );
       assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
-        "ss on 1 --json",
+        "agent-screen on 1 --json",
         "message",
-        "ss off --json",
+        "agent-screen off --json",
       ]);
     },
   );
@@ -141,7 +141,7 @@ test("failed send tears down only a lease created by that request", async () => 
         }),
       );
       assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
-        "ss on 1 --json",
+        "agent-screen on 1 --json",
         "message",
       ]);
     },
@@ -165,14 +165,16 @@ test("uses the tmux NATO name and exposes no caller-supplied identity", async ()
   });
 });
 
-test("normalizes Claude tmux prefixes to the NATO agent name", async () => {
-  await withServer({ tmuxName: "claude-lima" }, async ({ client, body }) => {
-    await client.callTool({
-      name: "request_help",
-      arguments: { reason: "blocked", context: "Approval" },
+test("normalizes backend tmux prefixes to the NATO agent name", async () => {
+  for (const backend of ["copilot", "claude", "codex"]) {
+    await withServer({ tmuxName: `${backend}-lima` }, async ({ client, body }) => {
+      await client.callTool({
+        name: "request_help",
+        arguments: { reason: "blocked", context: "Approval" },
+      });
+      assert.match(readFileSync(body, "utf8"), /^Agent lima:/);
     });
-    assert.match(readFileSync(body, "utf8"), /^Agent lima:/);
-  });
+  }
 });
 
 test("supports the legacy Screen Sharing helper output during migration", async () => {
@@ -215,7 +217,7 @@ test("does not send a linkless message when Screen Sharing fails", async () => {
         }),
       );
       assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
-        "ss on 1 --json",
+        "agent-screen on 1 --json",
       ]);
       assert.equal(existsSync(body), false);
       assert.equal(

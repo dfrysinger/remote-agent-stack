@@ -2,9 +2,9 @@
 # remote-agent-stack uninstaller
 #
 # Removes the userland artifacts installed by install.sh:
-#   - remote-agent plus copilot-agent, claude-agent, and codex-agent symlinks
-#   - owned retired ca, cc, and co symlinks
-#   - /usr/local/bin/ss and /usr/local/bin/vncfix symlinks (GUI helpers)
+#   - agent-stack plus copilot-agent, claude-agent, and codex-agent symlinks
+#   - agent-screen plus owned retired ca, cc, co, ss, and remote-* symlinks
+#   - /usr/local/bin/vncfix symlink (GUI recovery helper)
 #   - selected CLI agent-help MCP entries + managed instruction blocks
 #   - an owned headless Dreaming runtime
 #   - bounded Screen Sharing helper, watchdog, root config, state, and sudoers
@@ -28,6 +28,7 @@ MANAGE_SKILLS_PLUGIN="$REPO_ROOT/scripts/manage-skills-plugin.mjs"
 MANAGE_DREAMING="$REPO_ROOT/scripts/manage-dreaming.mjs"
 COMMAND_LINK_MANAGER="$REPO_ROOT/scripts/manage-command-links.sh"
 COMMAND_BIN_DIR="${REMOTE_AGENT_STACK_BIN_DIR:-/usr/local/bin}"
+SCREEN_SHARING_SRC="$REPO_ROOT/bin/agent-screen"
 SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
 SS_ROOT_CONFIG_DIR="/usr/local/etc/remote-agent-stack"
 SS_STATE_DIR="/var/db/remote-agent-stack"
@@ -52,10 +53,16 @@ skip() { printf '  \033[2m·\033[0m %s\n' "$*"; }
 todo() { printf '  \033[36m→\033[0m %s\n' "$*"; }
 
 remove_agent_commands() {
-  local needs_sudo=false name path
-  for name in remote-agent copilot-agent claude-agent codex-agent ca cc co; do
+  local needs_sudo=false name path expected
+  for name in agent-stack copilot-agent claude-agent codex-agent agent-screen ca cc co ss remote-agent remote-screen; do
     path="$COMMAND_BIN_DIR/$name"
-    if [ -L "$path" ] && [ "$(readlink "$path")" = "$WRAPPER_SRC" ]; then
+    case "$name" in
+      agent-screen) expected="$SCREEN_SHARING_SRC" ;;
+      remote-screen) expected="$REPO_ROOT/bin/remote-screen" ;;
+      ss) expected="$REPO_ROOT/bin/ss" ;;
+      *) expected="$WRAPPER_SRC" ;;
+    esac
+    if [ -L "$path" ] && [ "$(readlink "$path")" = "$expected" ]; then
       needs_sudo=true
       break
     fi
@@ -64,11 +71,13 @@ remove_agent_commands() {
     sudo bash "$COMMAND_LINK_MANAGER" \
       --mode uninstall \
       --wrapper "$WRAPPER_SRC" \
+      --screen-wrapper "$SCREEN_SHARING_SRC" \
       --bin-dir "$COMMAND_BIN_DIR"
   else
     bash "$COMMAND_LINK_MANAGER" \
       --mode uninstall \
       --wrapper "$WRAPPER_SRC" \
+      --screen-wrapper "$SCREEN_SHARING_SRC" \
       --bin-dir "$COMMAND_BIN_DIR"
   fi
 }
@@ -218,12 +227,12 @@ fi
 
 bold "Removing owned agent commands"
 remove_agent_commands
-ok "owned canonical commands, long aliases, and retired short aliases removed"
+ok "owned canonical commands, long aliases, and retired short commands removed"
 
-bold "Removing GUI helpers (ss, vncfix)"
+bold "Removing GUI recovery helper (vncfix)"
 # Same exact-match guard as the agent commands: only remove links that point at
 # THIS clone's bin/ scripts; leave foreign symlinks and real files alone.
-for _pair in "ss:$REPO_ROOT/bin/ss" "vncfix:$REPO_ROOT/bin/vncfix"; do
+for _pair in "vncfix:$REPO_ROOT/bin/vncfix"; do
   _name="${_pair%%:*}"; _src="${_pair##*:}"; _dst="/usr/local/bin/$_name"
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; then
     todo "sudo rm $_dst"

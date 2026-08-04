@@ -3,7 +3,7 @@
 #
 # The canonical command selects a backend explicitly. The three long aliases
 # select it from their invocation name:
-#   remote-agent <copilot|claude|codex> <name>
+#   agent-stack <copilot|claude|codex> <name>
 #   copilot-agent <name>
 #   claude-agent <name>
 #   codex-agent <name>
@@ -49,7 +49,7 @@ USAGE
 
 usage_backend() {
   local command
-  if [ "$INVOCATION" = "remote-agent" ] || [ "$INVOCATION" = "agent" ]; then
+  if [ "$INVOCATION" = "agent-stack" ] || [ "$INVOCATION" = "agent" ]; then
     command="$INVOCATION $BACKEND"
   else
     command="$INVOCATION"
@@ -72,7 +72,7 @@ USAGE
 }
 
 case "$INVOCATION" in
-  remote-agent|agent)
+  agent-stack|agent)
     case "${1:-}" in
       -h|--help)
         [ $# -eq 1 ] || { usage_global >&2; exit 2; }
@@ -144,7 +144,7 @@ case "$BACKEND" in
   copilot)
     AGENT_BIN="$COPILOT_BIN"
     WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE"
-    SESSION_PREFIX="copilot-"
+    SESSION_PREFIX=""
     ;;
   claude)
     AGENT_BIN="$CLAUDE_BIN"
@@ -240,10 +240,10 @@ inside_tmux() {
 # once nobody drains it.
 require_terminal() {
   if [ ! -t 0 ] || [ ! -t 1 ]; then
-    echo "remote-agent: refusing to attach '$SESSION' without a terminal." >&2
-    echo "remote-agent: this would wedge the tmux server. Run it from an interactive" >&2
-    echo "remote-agent: shell, or inspect the session with:" >&2
-    echo "remote-agent:   tmux capture-pane -p -t $SESSION" >&2
+    echo "agent-stack: refusing to attach '$SESSION' without a terminal." >&2
+    echo "agent-stack: this would wedge the tmux server. Run it from an interactive" >&2
+    echo "agent-stack: shell, or inspect the session with:" >&2
+    echo "agent-stack:   tmux capture-pane -p -t $SESSION" >&2
     exit 1
   fi
 }
@@ -278,9 +278,14 @@ refuse_mismatched_session() {
 
 # ---- attach if session exists ---------------------------------------------
 
-if [ "$BACKEND" = "copilot" ] && tmux has-session -t "=$NAME" 2>/dev/null; then
-  if session_matches_workspace "$NAME"; then
-    SESSION="$NAME"
+# A short-lived pre-release used copilot-<name>. Prefer the stable unprefixed
+# Copilot namespace for new sessions, but keep those live sessions attachable
+# until they are naturally retired.
+if [ "$BACKEND" = "copilot" ] &&
+   ! tmux has-session -t "=$NAME" 2>/dev/null &&
+   tmux has-session -t "=copilot-$NAME" 2>/dev/null; then
+  if session_matches_workspace "copilot-$NAME"; then
+    SESSION="copilot-$NAME"
   fi
 fi
 

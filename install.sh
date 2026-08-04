@@ -6,8 +6,8 @@
 #   - Homebrew (if missing)
 #   - tmux + tailscale (via brew)
 #   - /etc/resolver/ts.net (MagicDNS fix for Homebrew tailscaled)
-#   - remote-agent wrapper + descriptive backend aliases in /usr/local/bin
-#   - ss + vncfix GUI-access helpers symlinked into /usr/local/bin
+#   - agent-stack wrapper + descriptive backend aliases in /usr/local/bin
+#   - agent-screen + vncfix GUI-access helpers symlinked into /usr/local/bin
 #   - ~/.tmux.conf managed block (hides the redundant tmux status bar)
 #
 # All operations that require root are batched into a single sudo
@@ -136,8 +136,7 @@ done
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WRAPPER_SRC="$REPO_ROOT/bin/agent"
 COMMAND_LINK_MANAGER="$REPO_ROOT/scripts/manage-command-links.sh"
-SS_SRC="$REPO_ROOT/bin/ss"
-SS_DST="/usr/local/bin/ss"
+SCREEN_SHARING_SRC="$REPO_ROOT/bin/agent-screen"
 VNCFIX_SRC="$REPO_ROOT/bin/vncfix"
 VNCFIX_DST="/usr/local/bin/vncfix"
 RESOLVER_SRC="$REPO_ROOT/etc/resolver-ts.net"
@@ -197,8 +196,9 @@ ok "macOS detected ($(sw_vers -productVersion))"
 bash "$COMMAND_LINK_MANAGER" \
   --mode check \
   --wrapper "$WRAPPER_SRC" \
+  --screen-wrapper "$SCREEN_SHARING_SRC" \
   --bin-dir /usr/local/bin
-ok "agent command paths are ownership-safe"
+ok "managed command paths are ownership-safe"
 
 if [ "$(uname -m)" != "arm64" ]; then
   warn "Non-arm64 Mac detected — paths assume /opt/homebrew; expect bumps."
@@ -547,22 +547,31 @@ if [ ! -d /usr/local/bin ]; then
   NEED_USRLOCALBIN_MKDIR=true
 fi
 
-for _name in remote-agent copilot-agent claude-agent codex-agent; do
+for _name in agent-stack copilot-agent claude-agent codex-agent agent-screen; do
   _dst="/usr/local/bin/$_name"
-  if ! { [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; }; then
+  if [ "$_name" = "agent-screen" ]; then
+    _expected="$SCREEN_SHARING_SRC"
+  else
+    _expected="$WRAPPER_SRC"
+  fi
+  if ! { [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_expected" ]; }; then
     NEED_SYMLINK=true
   fi
 done
-for _name in ca cc co; do
+for _name in ca cc co ss remote-agent remote-screen; do
   _dst="/usr/local/bin/$_name"
-  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
+  case "$_name" in
+    ss) _expected="$REPO_ROOT/bin/ss" ;;
+    remote-screen) _expected="$REPO_ROOT/bin/remote-screen" ;;
+    *) _expected="$WRAPPER_SRC" ;;
+  esac
+  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_expected" ]; then
     NEED_SYMLINK=true
   fi
 done
 
-# GUI helpers (ss, vncfix) — linked into /usr/local/bin the same way as the
-# wrapper, with the same collision-avoidance as the agent commands.
-for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
+# vncfix remains a standalone GUI recovery helper.
+for _pair in "$VNCFIX_SRC:$VNCFIX_DST"; do
   _src="${_pair%%:*}"; _dst="${_pair##*:}"
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; then
     :  # already correct
@@ -574,7 +583,7 @@ for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
 done
 
 # Ensure the wrapper + GUI helpers are executable (no sudo needed).
-chmod +x "$WRAPPER_SRC" "$SS_SRC" "$VNCFIX_SRC" "$SS_ROOT_SRC" \
+chmod +x "$WRAPPER_SRC" "$SCREEN_SHARING_SRC" "$VNCFIX_SRC" "$SS_ROOT_SRC" \
   "$MCP_SRC/server.mjs" "$MCP_SRC/configure.mjs" "$MANAGE_AGENT_HELP" \
   "$MANAGE_SKILLS_PLUGIN" "$MANAGE_DREAMING" "$COMMAND_LINK_MANAGER"
 
@@ -600,8 +609,8 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
   $NEED_TAILSCALED_START   && echo "    • start tailscaled (brew services start tailscale)"
   $NEED_RESOLVER_WRITE     && echo "    • write $RESOLVER_DST (MagicDNS resolver)"
   $NEED_USRLOCALBIN_MKDIR  && echo "    • create /usr/local/bin"
-  $NEED_SYMLINK            && echo "    • install remote-agent and three long aliases; retire owned ca/cc/co links"
-  $NEED_SYMLINK            && echo "    • symlink $SS_DST, $VNCFIX_DST -> bin/{ss,vncfix}"
+  $NEED_SYMLINK            && echo "    • install agent-stack, backend aliases, and agent-screen; retire owned short and remote-* links"
+  $NEED_SYMLINK            && echo "    • symlink $VNCFIX_DST -> bin/vncfix"
   $NEED_SCREEN_SHARING_INSTALL && echo "    • install bounded Screen Sharing helper, watchdog, and exact sudoers rules"
   echo
   echo "  ============================================================"
@@ -620,8 +629,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
   RESOLVER_DST="$RESOLVER_DST" \
   WRAPPER_SRC="$WRAPPER_SRC" \
   COMMAND_LINK_MANAGER="$COMMAND_LINK_MANAGER" \
-  SS_SRC="$SS_SRC" \
-  SS_DST="$SS_DST" \
+  SCREEN_SHARING_SRC="$SCREEN_SHARING_SRC" \
   VNCFIX_SRC="$VNCFIX_SRC" \
   VNCFIX_DST="$VNCFIX_DST" \
   SS_ROOT_SRC="$SS_ROOT_SRC" \
@@ -635,7 +643,7 @@ if $NEED_TAILSCALED_START || $NEED_RESOLVER_WRITE || $NEED_USRLOCALBIN_MKDIR ||
   SCREEN_SHARING_PORT="$SCREEN_SHARING_PORT_RESOLVED" \
   TAILSCALE_BIN="$(command -v tailscale)" \
   BREW_BIN="$(command -v brew)" \
-  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,NEED_SCREEN_SHARING_INSTALL,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,COMMAND_LINK_MANAGER,SS_SRC,SS_DST,VNCFIX_SRC,VNCFIX_DST,SS_ROOT_SRC,SS_ROOT_DST,SS_ROOT_CONFIG,SS_EXPIRY_PLIST_SRC,SS_EXPIRY_PLIST_DST,SS_EXPIRY_LABEL,SS_SUDOERS_DST,INSTALL_USER,SCREEN_SHARING_PORT,TAILSCALE_BIN,BREW_BIN \
+  sudo --preserve-env=NEED_TAILSCALED_START,NEED_RESOLVER_WRITE,NEED_USRLOCALBIN_MKDIR,NEED_SYMLINK,NEED_SCREEN_SHARING_INSTALL,RESOLVER_SRC,RESOLVER_DST,WRAPPER_SRC,COMMAND_LINK_MANAGER,SCREEN_SHARING_SRC,VNCFIX_SRC,VNCFIX_DST,SS_ROOT_SRC,SS_ROOT_DST,SS_ROOT_CONFIG,SS_EXPIRY_PLIST_SRC,SS_EXPIRY_PLIST_DST,SS_EXPIRY_LABEL,SS_SUDOERS_DST,INSTALL_USER,SCREEN_SHARING_PORT,TAILSCALE_BIN,BREW_BIN \
     bash -euo pipefail <<'PRIVILEGED_BLOCK'
     if [ "$NEED_TAILSCALED_START" = "true" ]; then
       echo "  → starting tailscaled"
@@ -796,10 +804,11 @@ except Exception:
       bash "$COMMAND_LINK_MANAGER" \
         --mode install \
         --wrapper "$WRAPPER_SRC" \
+        --screen-wrapper "$SCREEN_SHARING_SRC" \
         --bin-dir /usr/local/bin
 
-      # GUI helpers retain their own collision-avoidance rules.
-      for _pair in "$SS_SRC:$SS_DST" "$VNCFIX_SRC:$VNCFIX_DST"; do
+      # vncfix retains its standalone collision-avoidance rule.
+      for _pair in "$VNCFIX_SRC:$VNCFIX_DST"; do
         _src="${_pair%%:*}"; _dst="${_pair##*:}"
         if [ ! -e "$_dst" ] || { [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; }; then
           echo "  → symlinking $_dst"
@@ -814,7 +823,7 @@ PRIVILEGED_BLOCK
   $NEED_RESOLVER_WRITE     && ok "$RESOLVER_DST written" || true
   $NEED_USRLOCALBIN_MKDIR  && ok "/usr/local/bin created" || true
   $NEED_SYMLINK            && ok "agent command links reconciled" || true
-  $NEED_SYMLINK            && [ -L "$SS_DST" ] && [ "$(readlink "$SS_DST")" = "$SS_SRC" ] && ok "$SS_DST -> $SS_SRC" || true
+  $NEED_SYMLINK            && [ -L /usr/local/bin/agent-screen ] && [ "$(readlink /usr/local/bin/agent-screen)" = "$SCREEN_SHARING_SRC" ] && ok "/usr/local/bin/agent-screen -> $SCREEN_SHARING_SRC" || true
   $NEED_SYMLINK            && [ -L "$VNCFIX_DST" ] && [ "$(readlink "$VNCFIX_DST")" = "$VNCFIX_SRC" ] && ok "$VNCFIX_DST -> $VNCFIX_SRC" || true
   $NEED_SCREEN_SHARING_INSTALL && ok "bounded Screen Sharing helper installed" || true
 else
@@ -1023,9 +1032,9 @@ cat > "$CONFIG_DIR/config" <<EOF
 # Re-generated by install.sh; safe to edit by hand.
 #
 # One wrapper (bin/agent) serves three backends:
-#   remote-agent copilot <Name> or copilot-agent <Name>
-#   remote-agent claude  <Name> or claude-agent <Name>
-#   remote-agent codex   <Name> or codex-agent <Name>
+#   agent-stack copilot <Name> or copilot-agent <Name>
+#   agent-stack claude  <Name> or claude-agent <Name>
+#   agent-stack codex   <Name> or codex-agent <Name>
 
 # Where each backend's agent working directories live.
 COPILOT_WORKSPACE_BASE="$COPILOT_WORKSPACE_BASE_RESOLVED"
@@ -1141,7 +1150,7 @@ if [ "$EXISTING_LAUNCHAGENT" = "yes" ]; then
   ok "keeping existing LaunchAgent: $LAUNCHAGENT_DST"
   INSTALL_LAUNCHAGENT="true"  # so we still re-stamp the script path / reload below
 elif [ -t 0 ] && [ -t 1 ]; then
-  echo "    Without this, the first \`remote-agent <backend> <name>\` after a reboot bootstraps the"
+  echo "    Without this, the first \`agent-stack <backend> <name>\` after a reboot bootstraps the"
   echo "    tmux server from your SSH login shell, which inherits a restricted"
   echo "    keychain context. Result: \`gh\`, the osxkeychain git helper, and"
   echo "    anything else that reads the login keychain silently fail inside"
@@ -1225,7 +1234,7 @@ if [ "$INSTALL_LAUNCHAGENT" = "true" ]; then
     echo "      2. From any shell: tmux kill-server"
     echo "         (the watchdog will refire the bootstrap script within"
     echo "          a few seconds and the new server will be GUI-context)"
-    echo "      3. Re-attach your named agents: remote-agent copilot alpha, remote-agent claude bravo, ..."
+    echo "      3. Re-attach your named agents: agent-stack copilot alpha, agent-stack claude bravo, ..."
     echo "    Each Copilot session resumes by UUID (no conversation lost)."
   fi
 fi
@@ -1297,21 +1306,21 @@ bold "Backend CLIs"
 if have copilot; then
   ok "copilot CLI found ($(copilot --version 2>&1 | head -1))"
 else
-  warn "copilot CLI not found in PATH — 'remote-agent copilot' / 'copilot-agent' will error until installed."
+  warn "copilot CLI not found in PATH — 'agent-stack copilot' / 'copilot-agent' will error until installed."
   echo "    Install per https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli"
 fi
 
 if have claude; then
   ok "claude CLI found ($(claude --version 2>&1 | head -1))"
 else
-  warn "claude CLI not found in PATH — 'remote-agent claude' / 'claude-agent' will error until installed."
+  warn "claude CLI not found in PATH — 'agent-stack claude' / 'claude-agent' will error until installed."
   echo "    Install per https://docs.claude.com/en/docs/claude-code/quickstart"
 fi
 
 if have codex; then
   ok "codex CLI found ($(codex --version 2>&1 | head -1))"
 else
-  warn "codex CLI not found in PATH — 'remote-agent codex' / 'codex-agent' will error until installed."
+  warn "codex CLI not found in PATH — 'agent-stack codex' / 'codex-agent' will error until installed."
 fi
 
 # ---- shared skills plugin --------------------------------------------------
@@ -1401,10 +1410,10 @@ cat <<MANUAL
      login flow.
 
   4. Test:
-       remote-agent copilot alpha
-       remote-agent claude alpha
-       remote-agent codex alpha
-       ss on 1     # prints a clickable Screens URL; no password prompt
+       agent-stack copilot alpha
+       agent-stack claude alpha
+       agent-stack codex alpha
+       agent-screen on 1     # prints a clickable Screens URL; no password prompt
 
      Restart each CLI selected for agent help, then ask it to list MCP
      tools. It should expose \`request_help\`. The first real send may
@@ -1415,8 +1424,8 @@ cat <<MANUAL
      list. It should report \`dfrysinger-skills\`.
 
   5. (Optional) In Termius, set each agent's snippet to a single line:
-       remote-agent copilot alpha
-       remote-agent claude bravo
+       agent-stack copilot alpha
+       agent-stack claude bravo
        ...
 
   See README.md for the full Termius walkthrough (iOS hosts + Mac

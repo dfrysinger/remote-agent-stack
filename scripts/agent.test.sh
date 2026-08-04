@@ -14,7 +14,7 @@ LOG="$TMP/tmux.log"
 AUX_LOG="$TMP/aux.log"
 mkdir -p "$HOME_DIR" "$BIN_DIR" "$STATE_DIR/sessions"
 
-for name in remote-agent copilot-agent claude-agent codex-agent agent ca cc co mystery-agent; do
+for name in agent-stack copilot-agent claude-agent codex-agent agent ca cc co remote-agent mystery-agent; do
   ln -s "$WRAPPER" "$BIN_DIR/$name"
 done
 
@@ -160,15 +160,15 @@ assert_fails_with() {
   }
 }
 
-run_agent "$BIN_DIR/remote-agent" --help >/dev/null
+run_agent "$BIN_DIR/agent-stack" --help >/dev/null
 for backend in copilot claude codex; do
-  run_agent "$BIN_DIR/remote-agent" "$backend" --help >/dev/null
+  run_agent "$BIN_DIR/agent-stack" "$backend" --help >/dev/null
   run_agent "$BIN_DIR/$backend-agent" --help >/dev/null
 done
-assert_fails_with 2 "$BIN_DIR/remote-agent"
-assert_fails_with 2 "$BIN_DIR/remote-agent" unknown alpha
-assert_fails_with 2 "$BIN_DIR/remote-agent" copilot alpha extra
-assert_fails_with 2 "$BIN_DIR/remote-agent" copilot "x/../../claude-workspace/agent-victim"
+assert_fails_with 2 "$BIN_DIR/agent-stack"
+assert_fails_with 2 "$BIN_DIR/agent-stack" unknown alpha
+assert_fails_with 2 "$BIN_DIR/agent-stack" copilot alpha extra
+assert_fails_with 2 "$BIN_DIR/agent-stack" copilot "x/../../claude-workspace/agent-victim"
 [ ! -e "$TMP/claude-workspace/agent-victim" ]
 assert_fails_with 2 "$BIN_DIR/ca" alpha
 assert_fails_with 2 "$BIN_DIR/cc" alpha
@@ -177,8 +177,10 @@ assert_fails_with 2 "$BIN_DIR/mystery-agent" alpha
 
 for backend in copilot claude codex; do
   reset_tmux
-  run_agent "$BIN_DIR/remote-agent" "$backend" alpha
-  assert_contains "$LOG" "new-session|$backend-alpha|$TMP/$backend-workspace/agent-alpha"
+  run_agent "$BIN_DIR/agent-stack" "$backend" alpha
+  expected_session="$backend-alpha"
+  [ "$backend" = "copilot" ] && expected_session="alpha"
+  assert_contains "$LOG" "new-session|$expected_session|$TMP/$backend-workspace/agent-alpha"
   assert_contains "$LOG" "$backend"
   if [ "$backend" = "codex" ]; then
     assert_not_contains "$LOG" "resume --last"
@@ -196,19 +198,26 @@ done
 reset_tmux
 mkdir -p "$COPILOT_BASE/agent-alpha"
 printf '%s\n' "$COPILOT_BASE/agent-alpha" > "$STATE_DIR/sessions/alpha"
-run_agent "$BIN_DIR/remote-agent" copilot alpha
+run_agent "$BIN_DIR/agent-stack" copilot alpha
 assert_contains "$LOG" "switch-client|-t =alpha"
+
+reset_tmux
+mkdir -p "$COPILOT_BASE/agent-alpha"
+printf '%s\n' "$COPILOT_BASE/agent-alpha" > "$STATE_DIR/sessions/copilot-alpha"
+run_agent "$BIN_DIR/agent-stack" copilot alpha
+assert_contains "$LOG" "switch-client|-t =copilot-alpha"
 
 reset_tmux
 mkdir -p "$TMP/other"
 printf '%s\n' "$TMP/other" > "$STATE_DIR/sessions/alpha"
-run_agent "$BIN_DIR/remote-agent" copilot alpha
-assert_contains "$LOG" "new-session|copilot-alpha|$COPILOT_BASE/agent-alpha"
+assert_fails_with 1 "$BIN_DIR/agent-stack" copilot alpha
+[ ! -s "$LOG" ]
+assert_contains "$TMP/stderr" "belongs to another workspace"
 
 reset_tmux
 mkdir -p "$CLAUDE_BASE/agent-alpha" "$TMP/other"
 printf '%s\n' "$TMP/other" > "$STATE_DIR/sessions/claude-alpha"
-assert_fails_with 1 "$BIN_DIR/remote-agent" claude alpha
+assert_fails_with 1 "$BIN_DIR/agent-stack" claude alpha
 [ ! -s "$LOG" ]
 assert_contains "$TMP/stderr" "belongs to another workspace"
 
@@ -216,12 +225,12 @@ reset_tmux
 mkdir -p "$CLAUDE_BASE/agent-alpha"
 ln -s "$CLAUDE_BASE/agent-alpha" "$TMP/claude-agent-link"
 printf '%s\n' "$TMP/claude-agent-link" > "$STATE_DIR/sessions/claude-alpha"
-run_agent "$BIN_DIR/remote-agent" claude alpha
+run_agent "$BIN_DIR/agent-stack" claude alpha
 assert_contains "$LOG" "switch-client|-t =claude-alpha"
 
 reset_tmux
 printf '%s\n' "$CLAUDE_BASE/agent-alpha" > "$STATE_DIR/sessions/claude-alpha"
-run_agent_without_tmux "$BIN_DIR/remote-agent" claude alpha >"$TMP/stdout" 2>"$TMP/stderr" || status=$?
+run_agent_without_tmux "$BIN_DIR/agent-stack" claude alpha >"$TMP/stdout" 2>"$TMP/stderr" || status=$?
 [ "${status:-0}" -eq 1 ]
 assert_contains "$TMP/stderr" "refusing to attach"
 unset status
@@ -234,13 +243,13 @@ cwd: $COPILOT_BASE/agent-selected
 updated_at: 2026-08-02T10:00:00Z
 summary_count: 2
 EOF
-run_agent "$BIN_DIR/remote-agent" copilot selected
+run_agent "$BIN_DIR/agent-stack" copilot selected
 assert_contains "$LOG" "--session-id='11111111-1111-1111-1111-111111111111'"
 
 reset_tmux
 mkdir -p "$HOME_DIR/Library/Keychains"
 touch "$HOME_DIR/Library/Keychains/login.keychain-db"
-run_agent "$BIN_DIR/remote-agent" copilot keychain
+run_agent "$BIN_DIR/agent-stack" copilot keychain
 assert_contains "$AUX_LOG" "security|unlock-keychain"
 
 reset_tmux
@@ -251,26 +260,29 @@ cat > "$MAILBOX_DIR/mailbox-poke.sh" <<'MAILBOX'
 printf 'mailbox|%s\n' "$*" >> "$FAKE_AUX_LOG"
 MAILBOX
 chmod +x "$MAILBOX_DIR/mailbox-poke.sh"
-MAILBOX_INTEGRATION=true run_agent "$BIN_DIR/remote-agent" copilot mailbox
-sleep 0.1
-assert_contains "$AUX_LOG" "mailbox|copilot-mailbox --wait"
+MAILBOX_INTEGRATION=true run_agent "$BIN_DIR/agent-stack" copilot mailbox
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  grep -Fq "mailbox|mailbox --wait" "$AUX_LOG" 2>/dev/null && break
+  sleep 0.1
+done
+assert_contains "$AUX_LOG" "mailbox|mailbox --wait"
 
 reset_tmux
 mkdir -p "$HOME_DIR/.claude/projects/$(printf '%s' "$CLAUDE_BASE/agent-alpha" | sed 's|/|-|g')"
 touch "$HOME_DIR/.claude/projects/$(printf '%s' "$CLAUDE_BASE/agent-alpha" | sed 's|/|-|g')/session.jsonl"
-run_agent "$BIN_DIR/remote-agent" claude alpha
+run_agent "$BIN_DIR/agent-stack" claude alpha
 assert_contains "$LOG" "claude --continue"
 
 reset_tmux
 mkdir -p "$HOME_DIR/.codex/sessions/2026/08/02"
 printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' \
   "$CODEX_BASE/agent-alpha" > "$HOME_DIR/.codex/sessions/2026/08/02/rollout.jsonl"
-run_agent "$BIN_DIR/remote-agent" codex alpha
+run_agent "$BIN_DIR/agent-stack" codex alpha
 assert_contains "$LOG" "codex resume --last"
 
 for backend in copilot claude codex; do
   reset_tmux
-  ALLOW_ALL=true run_agent "$BIN_DIR/remote-agent" "$backend" permissions
+  ALLOW_ALL=true run_agent "$BIN_DIR/agent-stack" "$backend" permissions
   case "$backend" in
     copilot) flag="--allow-all" ;;
     claude) flag="--dangerously-skip-permissions" ;;
