@@ -171,8 +171,11 @@ assert_fails_with 2 "$BIN_DIR/agent-stack" copilot alpha extra
 assert_fails_with 2 "$BIN_DIR/agent-stack" copilot "x/../../claude-workspace/agent-victim"
 [ ! -e "$TMP/claude-workspace/agent-victim" ]
 assert_fails_with 2 "$BIN_DIR/ca" alpha
+assert_contains "$TMP/stderr" "'ca' is retired"
 assert_fails_with 2 "$BIN_DIR/cc" alpha
+assert_contains "$TMP/stderr" "'cc' is retired"
 assert_fails_with 2 "$BIN_DIR/co" alpha
+assert_contains "$TMP/stderr" "'co' is retired"
 assert_fails_with 2 "$BIN_DIR/mystery-agent" alpha
 
 for backend in copilot claude codex; do

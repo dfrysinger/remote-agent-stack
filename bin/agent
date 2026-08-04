@@ -92,8 +92,16 @@ case "$INVOCATION" in
   copilot-agent) BACKEND="copilot" ;;
   claude-agent)  BACKEND="claude" ;;
   codex-agent)   BACKEND="codex" ;;
+  ca|cc|co)
+    echo "'$INVOCATION' is retired; use agent-stack or a descriptive backend alias." >&2
+    echo "  agent-stack copilot <Name>  or  copilot-agent <Name>" >&2
+    echo "  agent-stack claude <Name>   or  claude-agent <Name>" >&2
+    echo "  agent-stack codex <Name>    or  codex-agent <Name>" >&2
+    exit 2
+    ;;
   *)
     echo "Unsupported invocation name: $INVOCATION" >&2
+    INVOCATION="agent-stack"
     usage_global >&2
     exit 2
     ;;
