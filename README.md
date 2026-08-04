@@ -1,11 +1,11 @@
-# remote-agent-stack
+# Agent Stack
 
 A macOS bootstrap that turns one Mac into a always-reachable host for
-running named AI agent sessions — [GitHub Copilot
-CLI](https://github.com/github/copilot-cli) and [Claude Code
-CLI](https://docs.claude.com/en/docs/claude-code) are both first-class
-backends, chosen per-command (`ca alpha` for Copilot, `cc alpha` for
-Claude) — and reach them from any device (phone, tablet, another
+running named AI agent sessions with [GitHub Copilot
+CLI](https://github.com/github/copilot-cli), [Claude Code
+CLI](https://docs.claude.com/en/docs/claude-code), or Codex CLI. Choose a
+backend explicitly (`agent-stack copilot alpha`, `agent-stack claude alpha`,
+or `agent-stack codex alpha`) and reach it from any device (phone, tablet, another
 laptop) over [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
 and `tmux`, with [Termius](https://termius.com) as the terminal
 client.
@@ -36,19 +36,23 @@ section you need from the table of contents.
 
 ## What you get
 
-- A single multi-call wrapper (`bin/agent`) installed under four names
-  — `ca` / `copilot-agent` for the Copilot backend, `cc` /
-  `claude-agent` for the Claude Code backend — that launches or
-  reattaches to a named agent session. Keychain unlock, `tmux` session
+- A single multi-call wrapper (`bin/agent`) installed as `agent-stack` plus
+  the descriptive aliases `copilot-agent`, `claude-agent`, and `codex-agent`.
+  It launches or reattaches to a named agent session. Keychain unlock, `tmux` session
   management, and best-effort resumption of the previous CLI session
   for that name (Copilot: stable UUID via `--session-id`; Claude:
-  `--continue` when the workspace has an existing session) are all
+  `--continue`; Codex: `resume --last` when the workspace has history) are all
   handled.
 
   Each backend has its own workspace root and its own tmux session
-  namespace, so the two never collide:
-    - `ca alpha` → workspace `$COPILOT_WORKSPACE_BASE/agent-alpha`, tmux `alpha`
-    - `cc alpha` → workspace `$CLAUDE_WORKSPACE_BASE/agent-alpha`,  tmux `claude-alpha`
+  namespace, so the three never collide:
+    - `agent-stack copilot alpha` → `$COPILOT_WORKSPACE_BASE/agent-alpha`, tmux `alpha`
+    - `agent-stack claude alpha` → `$CLAUDE_WORKSPACE_BASE/agent-alpha`, tmux `claude-alpha`
+    - `agent-stack codex alpha` → `$CODEX_WORKSPACE_BASE/agent-alpha`, tmux `codex-alpha`
+
+  Copilot keeps its established unprefixed tmux names. Claude and Codex use
+  backend prefixes, so the three namespaces do not collide. Matching
+  pre-release `copilot-<name>` sessions remain attachable but are not created.
 - A one-shot installer for OS-level prerequisites: Homebrew, `tmux`,
   Tailscale (CLI build), and the MagicDNS resolver fix that Homebrew's
   Tailscale formula leaves out.
@@ -56,7 +60,21 @@ section you need from the table of contents.
   and Codex CLI. A blocked agent can send one bounded iMessage identified by
   its NATO-alphabet tmux session. The tool opens temporary Screen Sharing and
   includes a clickable `screens://` link using the Mac's actual Tailscale name.
+- Optional installation of [`dfrysinger/dreaming`](https://github.com/dfrysinger/dreaming)
+  as a headless Copilot learning and skill-curation service, isolated from
+  normal interactive agent context.
 - A symmetric uninstaller.
+
+### Command reference
+
+| Task | Command |
+|---|---|
+| Launch or reattach Copilot | `agent-stack copilot <name>` or `copilot-agent <name>` |
+| Launch or reattach Claude | `agent-stack claude <name>` or `claude-agent <name>` |
+| Launch or reattach Codex | `agent-stack codex <name>` or `codex-agent <name>` |
+| Enable bounded Screen Sharing | `agent-screen on [1-8]` |
+| Disable Screen Sharing | `agent-screen off` |
+| Inspect Screen Sharing | `agent-screen status` |
 
 ## How many agents?
 
@@ -64,9 +82,9 @@ Pick whatever count fits your workflow. The author runs about a dozen
 in practice — named after the [NATO phonetic
 alphabet](https://en.wikipedia.org/wiki/NATO_phonetic_alphabet)
 (`alpha`, `bravo`, `charlie`, `delta`, `echo`, `foxtrot`, `golf`,
-`hotel`, `india`, `juliet`, `kilo`, `lima`). The `ca` script accepts
-any string and prepends `agent-` to derive a workspace directory, so
-`ca coordinator` or `ca planner` Just Work.
+`hotel`, `india`, `juliet`, `kilo`, `lima`). The wrapper accepts any
+non-option name without `/` and prepends `agent-` to derive a workspace directory, so
+`agent-stack copilot coordinator` or `claude-agent planner` Just Work.
 
 Names are **case-sensitive end-to-end** (`tmux` session, workspace
 directory, Copilot CLI session name all match exactly what you type).
@@ -82,7 +100,7 @@ Pick a casing convention and stick with it. Lowercase is what we use.
   drive agents from. Termius **Pro** is recommended for the snippet
   features used in [Part 2](#part-2--iphone-termius-ios), but the
   whole stack also works on Termius Free if you're willing to type
-  `ca alpha` after each connect.
+  `agent-stack copilot alpha` after each connect.
 - The **direct-download** Termius build on macOS — *not* the Mac App
   Store version, which is sandboxed and has no local-terminal feature.
   Download from <https://termius.com/download>.
@@ -137,9 +155,9 @@ suspends — so the tailnet stays online and `tmux` sessions stay alive.
 ### 1.3 — Clone and run the installer
 
 ```bash
-git clone https://github.com/dfrysinger/remote-agent-stack \
-  ~/code/remote-agent-stack
-cd ~/code/remote-agent-stack
+git clone https://github.com/dfrysinger/agent-stack \
+  ~/code/agent-stack
+cd ~/code/agent-stack
 ./install.sh
 ```
 
@@ -153,9 +171,16 @@ The installer is idempotent — safe to re-run. It:
   commands are limited to `on` for one through eight hours and
   `off`. A launchd watchdog enforces the deadline after logout,
   sleep, or reboot.
-- Symlinks four names into `/usr/local/bin` — `copilot-agent`,
-  `ca`, `claude-agent`, `cc` — all pointing at the same multi-call
-  wrapper (`bin/agent`).
+- Symlinks `agent-stack`, `copilot-agent`, `claude-agent`, and `codex-agent`
+  into `/usr/local/bin`, all pointing at the same multi-call wrapper
+  (`bin/agent`). During upgrade it removes `ca`, `cc`, `co`, and transitional
+  `remote-agent` links only when they are owned by this checkout; foreign
+  commands are preserved.
+- Symlinks `agent-screen` for bounded Screen Sharing. During upgrade it removes
+  owned `ss` and transitional `remote-screen` links; foreign commands are
+  preserved.
+- Optionally installs `dfrysinger/skills` for any selected backend and
+  `dfrysinger/dreaming` as a dedicated headless Copilot service.
 - Stamps a managed block into `~/.tmux.conf` that hides tmux's status
   bar (the agents are full-screen TUIs and your Termius tabs already
   label each session). Toggle it back per-session with `prefix + b`.
@@ -164,13 +189,20 @@ The installer is idempotent — safe to re-run. It:
   you — Full Disk Access grants (next step), `tailscale up --ssh`,
   first Copilot CLI auth prompt.
 
+> **Upgrading from the old short commands:** the installer intentionally
+> retires owned `ca`, `cc`, `co`, and `ss` links. Update saved Termius startup
+> snippets to `agent-stack <backend> <name>`. For an existing Mac Termius
+> workspace, run the new command once in every pane and save the workspace
+> again so autocomplete replays the replacement command. Use `agent-screen`
+> instead of `ss`. Any foreign command using those names is left untouched.
+
 If you're driving the install **over VNC / Screens / Termius** —
 anywhere the `sudo` prompt could be hard to see — use the GUI launcher
 instead, which opens a fresh Terminal.app window where the password
 prompt is obvious:
 
 ```bash
-open ~/code/remote-agent-stack/install-gui.command
+open ~/code/agent-stack/install-gui.command
 ```
 
 (Or double-click `install-gui.command` in Finder.)
@@ -270,12 +302,12 @@ Install whichever backend CLI(s) you plan to use:
   The first launch opens an in-terminal login flow — follow the
   prompts to authenticate; the token lands under `~/.claude/`.
 
-You can install one, the other, or both. The wrapper enforces the
-presence of the backend binary in PATH only at launch time.
+- **Codex CLI** — install and authenticate Codex normally. The wrapper
+  resumes the most recent session for the selected workspace when matching
+  history exists.
 
-- **Codex CLI** can use `request_help` even though it is not yet a
-  named-session backend of `bin/agent`. Install Codex normally, then
-  select `codex` when the installer asks which CLIs to configure.
+Install any combination. The wrapper checks for a backend binary only when
+that backend is launched.
 
 The help-tool selection can also be supplied noninteractively:
 
@@ -331,15 +363,17 @@ state.
 
 Each backend has its own root directory; inside each, agents are
 `agent-<name>/` subdirs (e.g., `agent-alpha/`, `agent-bravo/`). The
-installer asks for both roots and auto-picks smart defaults:
+installer asks for all roots and auto-picks smart defaults:
 
 - **With Dropbox installed** (recommended — workspaces sync across
   Macs):
   - Copilot: `~/Library/CloudStorage/Dropbox/copilot-workspace`
   - Claude:  `~/Library/CloudStorage/Dropbox/claude-workspace`
+  - Codex:   `~/Library/CloudStorage/Dropbox/codex-workspace`
 - **Without Dropbox**:
   - Copilot: `~/copilot-workspace`
   - Claude:  `~/claude-workspace`
+  - Codex:   `~/codex-workspace`
 
 Press Enter to accept a default, or type any path (`~`, `$HOME`, and
 shell expansions all work). Re-running `install.sh` later keeps
@@ -350,10 +384,12 @@ To pick paths non-interactively (or from a script):
 ```bash
 ./install.sh \
   --copilot-workspace-base ~/code/copilot-workspace \
-  --claude-workspace-base  ~/code/claude-workspace
+  --claude-workspace-base  ~/code/claude-workspace \
+  --codex-workspace-base   ~/code/codex-workspace
 ```
 
-This writes `COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` into
+This writes `COPILOT_WORKSPACE_BASE`, `CLAUDE_WORKSPACE_BASE`, and
+`CODEX_WORKSPACE_BASE` into
 `~/.config/remote-agent-stack/config`. Edit that file directly any
 time to move a workspace base later (you'll have to move existing
 `<name>/` directories under it by hand).
@@ -363,13 +399,19 @@ time to move a workspace base later (you'll have to move existing
 Copilot backend:
 
 ```bash
-ca alpha        # tmux session `alpha`, workspace `$COPILOT_WORKSPACE_BASE/agent-alpha/`
+agent-stack copilot alpha
 ```
 
 Claude Code backend:
 
 ```bash
-cc alpha        # tmux session `claude-alpha`, workspace `$CLAUDE_WORKSPACE_BASE/agent-alpha/`
+agent-stack claude alpha
+```
+
+Codex backend:
+
+```bash
+agent-stack codex alpha
 ```
 
 You should land inside the matching `tmux` session with the backend
@@ -468,7 +510,7 @@ For each agent name (`alpha`, `bravo`, `charlie`, …):
    snippet**. Enter:
 
    ```
-   ca alpha
+   agent-stack copilot alpha
    ```
 
    Name the snippet `Agent alpha` (or whatever you want), save, and
@@ -487,7 +529,7 @@ the same address and a different one-line startup snippet.
 
 Tap `Agent alpha`. Termius connects over Tailscale SSH (the iPhone's
 tailnet identity is what authenticates server-side — no password or
-key needed), lands in the Mac shell, runs `ca alpha`, and you're in
+key needed), lands in the Mac shell, runs `agent-stack copilot alpha`, and you're in
 the agent's `tmux` session. Detach with `Ctrl-b d`, kill the
 Termius tab, and reattach later from the same host (or from a
 different device entirely) — the `tmux` session keeps running on the
@@ -572,13 +614,13 @@ By default the panes have generic names. To rename:
 
 4. **Save again** (the tiny dot on the workspace tab).
 
-### 3.5 — Run `ca <name>` once in each pane
+### 3.5 — Run `agent-stack <backend> <name>` once in each pane
 
 In each pane, run the matching command:
 
 ```bash
-ca alpha   # in the pane named "alpha"
-ca bravo   # in the pane named "bravo"
+agent-stack copilot alpha   # in the pane named "alpha"
+agent-stack copilot bravo   # in the pane named "bravo"
 # …
 ```
 
@@ -593,7 +635,7 @@ This serves two purposes:
 Save the workspace one more time (tiny dot). Close the workspace
 window. Reopen it from the Workspaces sidebar.
 
-Each pane reopens, replays `ca <name>`, and reconnects to the
+Each pane reopens, replays `agent-stack copilot <name>`, and reconnects to the
 already-running `tmux` session on the Mac — you're back in the same
 grid of agent conversations you left.
 
@@ -617,9 +659,9 @@ Once everything is set up:
 - **Kill** an agent session entirely: exit Copilot CLI, then `exit`
   the shell `tmux` gave you. Or from outside any device:
   `tmux kill-session -t alpha`.
-- **Reattach from anywhere**: `ca alpha` on the Mac, or tap `Agent
+- **Reattach from anywhere**: `agent-stack copilot alpha` on the Mac, or tap `Agent
   alpha` in iOS Termius. Same session.
-- **GUI access** (graphical desktop, not just the terminal): `ss on`
+- **GUI access** (graphical desktop, not just the terminal): `agent-screen on`
   enables Screen Sharing for an hour and forwards it over the tailnet.
   It no longer asks for a password because the installer grants only
   the exact bounded helper commands. Connect using the printed
@@ -645,6 +687,7 @@ file looks roughly like:
 ```sh
 COPILOT_WORKSPACE_BASE="/Users/you/.../Dropbox/copilot-workspace"  # set during install
 CLAUDE_WORKSPACE_BASE="/Users/you/.../Dropbox/claude-workspace"    # set during install
+CODEX_WORKSPACE_BASE="/Users/you/.../Dropbox/codex-workspace"      # set during install
 MAILBOX_INTEGRATION="false"                                        # off by default
 ALLOW_ALL="false"                                                  # off by default
 AGENT_HELP_CLIS="copilot,claude,codex"                             # complete desired set
@@ -653,34 +696,36 @@ DESK_DISPLAY_COUNT="3"                                             # legacy comp
 SCREEN_SHARING_HOURS="1"                                           # automatic bounded lease
 # COPILOT_BIN="copilot"
 # CLAUDE_BIN="claude"
+# CODEX_BIN="codex"
 # AGENT_DIR_PREFIX="agent-"
 # SESSION_WARN_MB="300"
 ```
 
-`COPILOT_WORKSPACE_BASE` and `CLAUDE_WORKSPACE_BASE` are whatever you
+The three `*_WORKSPACE_BASE` values are whatever you
 picked at install time (Dropbox defaults if Dropbox is installed,
-otherwise `$HOME/copilot-workspace` and `$HOME/claude-workspace`).
+otherwise backend-specific directories directly under `$HOME`).
 Inside each root, agents live in `agent-<name>/` subdirs (change the
 prefix with `AGENT_DIR_PREFIX` if you want a different convention).
-Re-run `./install.sh` with `--copilot-workspace-base PATH` /
-`--claude-workspace-base PATH` or edit the file directly to move a
+Re-run `./install.sh` with the matching `--<backend>-workspace-base PATH`
+option or edit the file directly to move a
 root.
 
 `MAILBOX_INTEGRATION` enables the cross-session
-[mailbox](https://github.com/dfrysinger/skills) skill — `ca` pokes the
+[mailbox](https://github.com/dfrysinger/skills) skill — the wrapper pokes the
 recipient's pane on attach + cold-start when pending mail exists. Off
 unless you have the skill installed.
 
 `ALLOW_ALL` makes the wrapper skip permission prompts on new-session
 launch — Copilot: `--allow-all` (auto-approves tools, paths, URLs);
-Claude Code: `--dangerously-skip-permissions`. Personal-machine
+Claude Code: `--dangerously-skip-permissions`; Codex:
+`--dangerously-bypass-approvals-and-sandbox`. Personal-machine
 convenience; do not enable in shared environments.
 
-`SESSION_WARN_MB` (Copilot only) is the size at which `ca` offers to
+`SESSION_WARN_MB` (Copilot only) is the size at which the wrapper offers to
 retire an agent's session and start a fresh one. Copilot replays a
 session's whole event log on resume, so a session carried for weeks
 grows into the gigabytes and becomes slow to start. Accept the offer and
-`ca` records the old session as retired, launches a new one, and seeds
+the wrapper records the old session as retired, launches a new one, and seeds
 it with a prompt that rebuilds context from the old session's
 `plan.md`, checkpoints, todo database, and conversation tail. Nothing is
 deleted — the retired session stays on disk, resumable and minable. Set
@@ -691,7 +736,7 @@ The first carry-over asks Copilot to approve reading
 Choose "add these directories to the allowed list" and later rotations
 run without prompting.
 
-`COPILOT_BIN` / `CLAUDE_BIN` let you point the wrapper at a specific
+`COPILOT_BIN`, `CLAUDE_BIN`, and `CODEX_BIN` let you point the wrapper at a specific
 backend binary (e.g., `/opt/homebrew/bin/copilot` or a nightly build).
 
 `AGENT_HELP_CLIS` is the complete managed set. Re-run the installer
@@ -720,8 +765,6 @@ a managed instruction block, and removes any block it previously wrote from:
 - Codex CLI: `~/.codex/AGENTS.md`
 
 Active CLI sessions must be restarted after changing MCP selection.
-Additional named-session backends, including Codex CLI, remain on the
-roadmap. See [Status](#status--roadmap).
 
 ### tmux keychain bootstrap LaunchAgent
 
@@ -731,11 +774,11 @@ that pre-warms the tmux server in your GUI (Aqua) login session at
 every login and re-fires automatically whenever the tmux socket
 disappears.
 
-Without it, the very first `ca <name>` call after a Mac reboot
+Without it, the first `agent-stack <backend> <name>` call after a Mac reboot
 bootstraps the tmux server from your SSH login shell. macOS gives that
 shell a restricted keychain search list (System keychain only, no
 login keychain), and *every* subsequent shell inside that tmux server
-inherits the restriction — including the ones `ca` opens later when
+inherits the restriction — including the ones the wrapper opens later when
 you re-attach. The visible symptom is that `gh`, the `osxkeychain`
 git credential helper, and anything else that reaches into the login
 keychain silently fail inside agent shells, even though they work in
@@ -745,14 +788,15 @@ The LaunchAgent fixes that by starting the tmux server itself under
 the GUI session, so the security context is correct from the first
 session onward. It runs once at login, starts a hidden anchor session
 called `_keychain-anchor` (so the server stays alive), and exits.
-Subsequent `ca <name>` calls just attach to or create sessions on
+Subsequent wrapper calls just attach to or create sessions on
 that already-running, properly-contextualized server.
 
 It also installs a `PathState` watchdog on the tmux socket. If you
 ever run `tmux kill-server` — intentionally or by accident — launchd
 notices the socket disappear within a few seconds and re-fires the
 bootstrap script, which spawns a fresh GUI-context server. So
-recovery is hands-off: kill the server, wait a moment, run `ca <name>`
+recovery is hands-off: kill the server, wait a moment, run the same
+`agent-stack <backend> <name>` command
 again, you're back.
 
 If you skip it: keep using `gh-auth-macos` from the
@@ -772,8 +816,9 @@ rm ~/Library/LaunchAgents/com.dfrysinger.tmux-keychain-bootstrap.plist
 ## Uninstall
 
 ```bash
-~/code/remote-agent-stack/uninstall.sh           # wrappers, MCP entries, instructions, remote access
-~/code/remote-agent-stack/uninstall.sh --purge   # also drops private recipient/state config
+~/code/agent-stack/uninstall.sh           # wrappers, MCP entries, instructions, remote access
+~/code/agent-stack/uninstall.sh --purge   # also drops private recipient/state config
+~/code/agent-stack/uninstall.sh --commands-only  # only owned agent command links
 ```
 
 Homebrew packages, FDA grants, and Tailscale network state are left in
@@ -782,10 +827,9 @@ place — see the uninstaller output for the manual cleanup commands.
 ## Status & roadmap
 
 Single-machine, single-user, macOS arm64. Tested on macOS Tahoe.
-Copilot CLI and Claude Code CLI are both first-class backends today.
-Linux support and a Codex CLI backend are [open
-issues](https://github.com/dfrysinger/remote-agent-stack/issues) —
-patches welcome.
+Copilot CLI, Claude Code CLI, and Codex CLI are first-class named-session
+backends. Linux support remains an
+[open issue](https://github.com/dfrysinger/agent-stack/issues).
 
 ## Other docs
 
@@ -796,5 +840,5 @@ patches welcome.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — every macOS /
   Tailscale / Copilot CLI / Termius gotcha we hit.
 - [`docs/screen-sharing.md`](docs/screen-sharing.md) — GUI access over
-  Tailscale: the `ss` / `vncfix` scripts, black-screen recovery, the
+  Tailscale: the `agent-screen` / `vncfix` scripts, black-screen recovery, the
   IPv4-blackhole workaround, and going dark without locking.

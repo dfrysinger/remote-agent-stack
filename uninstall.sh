@@ -2,9 +2,9 @@
 # remote-agent-stack uninstaller
 #
 # Removes the userland artifacts installed by install.sh:
-#   - /usr/local/bin/copilot-agent + ca symlinks (copilot backend)
-#   - /usr/local/bin/claude-agent  + cc symlinks (claude  backend)
-#   - /usr/local/bin/ss and /usr/local/bin/vncfix symlinks (GUI helpers)
+#   - agent-stack plus copilot-agent, claude-agent, and codex-agent symlinks
+#   - agent-screen plus owned retired ca, cc, co, ss, and remote-* symlinks
+#   - /usr/local/bin/vncfix symlink (GUI recovery helper)
 #   - selected CLI agent-help MCP entries + managed instruction blocks
 #   - an owned headless Dreaming runtime
 #   - bounded Screen Sharing helper, watchdog, root config, state, and sudoers
@@ -26,6 +26,9 @@ MCP_SERVER="$CONFIG_DIR/agent-help/server/server.mjs"
 MANAGE_AGENT_HELP="$REPO_ROOT/scripts/manage-agent-help.mjs"
 MANAGE_SKILLS_PLUGIN="$REPO_ROOT/scripts/manage-skills-plugin.mjs"
 MANAGE_DREAMING="$REPO_ROOT/scripts/manage-dreaming.mjs"
+COMMAND_LINK_MANAGER="$REPO_ROOT/scripts/manage-command-links.sh"
+COMMAND_BIN_DIR="${REMOTE_AGENT_STACK_BIN_DIR:-/usr/local/bin}"
+SCREEN_SHARING_SRC="$REPO_ROOT/bin/agent-screen"
 SS_ROOT_DST="/usr/local/libexec/ss-on-demand"
 SS_ROOT_CONFIG_DIR="/usr/local/etc/remote-agent-stack"
 SS_STATE_DIR="/var/db/remote-agent-stack"
@@ -34,10 +37,12 @@ SS_EXPIRY_LABEL="com.remote-agent-stack.screen-sharing-expiry"
 SS_SUDOERS="/etc/sudoers.d/ss-on-demand"
 
 PURGE=false
+COMMANDS_ONLY=false
 UNINSTALL_STATUS=0
 for arg in "$@"; do
   case "$arg" in
     --purge) PURGE=true ;;
+    --commands-only) COMMANDS_ONLY=true ;;
     *) echo "Unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
@@ -46,6 +51,36 @@ bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 skip() { printf '  \033[2m·\033[0m %s\n' "$*"; }
 todo() { printf '  \033[36m→\033[0m %s\n' "$*"; }
+
+remove_agent_commands() {
+  local needs_sudo=false name path expected
+  for name in agent-stack copilot-agent claude-agent codex-agent agent-screen ca cc co ss remote-agent remote-screen; do
+    path="$COMMAND_BIN_DIR/$name"
+    case "$name" in
+      agent-screen) expected="$SCREEN_SHARING_SRC" ;;
+      remote-screen) expected="$REPO_ROOT/bin/remote-screen" ;;
+      ss) expected="$REPO_ROOT/bin/ss" ;;
+      *) expected="$WRAPPER_SRC" ;;
+    esac
+    if [ -L "$path" ] && [ "$(readlink "$path")" = "$expected" ]; then
+      needs_sudo=true
+      break
+    fi
+  done
+  if $needs_sudo && [ "$COMMAND_BIN_DIR" = "/usr/local/bin" ]; then
+    sudo bash "$COMMAND_LINK_MANAGER" \
+      --mode uninstall \
+      --wrapper "$WRAPPER_SRC" \
+      --screen-wrapper "$SCREEN_SHARING_SRC" \
+      --bin-dir "$COMMAND_BIN_DIR"
+  else
+    bash "$COMMAND_LINK_MANAGER" \
+      --mode uninstall \
+      --wrapper "$WRAPPER_SRC" \
+      --screen-wrapper "$SCREEN_SHARING_SRC" \
+      --bin-dir "$COMMAND_BIN_DIR"
+  fi
+}
 
 read_config_var() {
   local var="$1"
@@ -57,6 +92,13 @@ read_config_var() {
     exit
   }' "$CONFIG_DIR/config" 2>/dev/null || true
 }
+
+if $COMMANDS_ONLY; then
+  bold "Removing owned agent commands only"
+  remove_agent_commands
+  ok "command cleanup complete; all non-command artifacts were left untouched"
+  exit 0
+fi
 
 bold "Removing bounded Screen Sharing support"
 if [ -L "$SS_ROOT_DST" ]; then
@@ -183,37 +225,14 @@ else
   UNINSTALL_STATUS=1
 fi
 
-bold "Removing copilot-agent wrapper"
-if [ -L /usr/local/bin/copilot-agent ] || [ -e /usr/local/bin/copilot-agent ]; then
-  todo "sudo rm /usr/local/bin/copilot-agent"
-  sudo rm -f /usr/local/bin/copilot-agent
-  ok "removed"
-else
-  skip "/usr/local/bin/copilot-agent not present"
-fi
+bold "Removing owned agent commands"
+remove_agent_commands
+ok "owned canonical commands, long aliases, and retired short commands removed"
 
-bold "Removing wrapper aliases (ca, claude-agent, cc)"
-# Only remove links that point at THIS clone's wrapper (exact absolute
-# match). Anything else — a foreign tool's symlink, a hand-rolled alias, a
-# real file — is left alone.
-for _dst in /usr/local/bin/ca /usr/local/bin/claude-agent /usr/local/bin/cc; do
-  if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$WRAPPER_SRC" ]; then
-    todo "sudo rm $_dst"
-    sudo rm -f "$_dst"
-    ok "removed $_dst"
-  elif [ -L "$_dst" ]; then
-    skip "$_dst symlinks to $(readlink "$_dst") — not ours, leaving alone"
-  elif [ -e "$_dst" ]; then
-    skip "$_dst exists and is not our symlink — leaving it alone"
-  else
-    skip "$_dst not present"
-  fi
-done
-
-bold "Removing GUI helpers (ss, vncfix)"
-# Same exact-match guard as the 'ca' alias: only remove links that point at
+bold "Removing GUI recovery helper (vncfix)"
+# Same exact-match guard as the agent commands: only remove links that point at
 # THIS clone's bin/ scripts; leave foreign symlinks and real files alone.
-for _pair in "ss:$REPO_ROOT/bin/ss" "vncfix:$REPO_ROOT/bin/vncfix"; do
+for _pair in "vncfix:$REPO_ROOT/bin/vncfix"; do
   _name="${_pair%%:*}"; _src="${_pair##*:}"; _dst="/usr/local/bin/$_name"
   if [ -L "$_dst" ] && [ "$(readlink "$_dst")" = "$_src" ]; then
     todo "sudo rm $_dst"

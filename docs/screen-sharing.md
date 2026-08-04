@@ -8,7 +8,7 @@ app and Finder's "Screen Sharing" connect to), tunnelled over Tailscale.
 
 Two user-facing scripts live in [`bin/`](../bin):
 
-- **`ss`** — toggle Screen Sharing on/off with an auto-off lease, and
+- **`agent-screen`** — toggle Screen Sharing on/off with an auto-off lease, and
   forward it over the tailnet with `tailscale serve`.
 - **`vncfix`** — recover the "connected, but black screen + cursor"
   symptom.
@@ -23,26 +23,26 @@ still closes after logout, sleep, reboot, or a failed user process.
 ## Install onto PATH
 
 `install.sh` symlinks these into `/usr/local/bin` alongside the agent
-wrappers (`ca`/`copilot-agent`, `cc`/`claude-agent`), so a normal
-install puts `ss` and `vncfix` on your PATH. To link them by hand (or
+wrappers, so a normal install puts `agent-screen` and `vncfix` on your PATH.
+To link them by hand (or
 without re-running the installer):
 
 ```bash
-ln -sf "$PWD/bin/ss"     /usr/local/bin/ss
-ln -sf "$PWD/bin/vncfix" /usr/local/bin/vncfix
+ln -sf "$PWD/bin/agent-screen" /usr/local/bin/agent-screen
+ln -sf "$PWD/bin/vncfix"       /usr/local/bin/vncfix
 ```
 
 Both resolve their own path at runtime, so either location works.
 
-## `ss` — toggle Screen Sharing
+## `agent-screen` — toggle Screen Sharing
 
 ```
-ss on [HOURS]   # default 1 hour; turns Screen Sharing ON, schedules auto-off
-ss off          # turn OFF now + cancel any pending auto-off
-ss status       # daemon state, port 5900 listener, serve mapping, capture-grant check
+agent-screen on [HOURS]   # default 1 hour; turns Screen Sharing ON
+agent-screen off          # turn OFF now + cancel any pending auto-off
+agent-screen status       # daemon, lease, mapping, and capture-grant status
 ```
 
-`ss on` does four things:
+`agent-screen on` does four things:
 
 1. Stops Remote Management (ARD) — it shares port 5900 and breaks Screens auth.
 2. Bootstraps + enables the `com.apple.screensharing` LaunchDaemon.
@@ -51,12 +51,12 @@ ss status       # daemon state, port 5900 listener, serve mapping, capture-grant
 4. Stores a root-owned absolute deadline enforced by launchd.
 
 It removes both the daemon exposure and the Tailscale mapping at the
-deadline. Re-run `ss on` to extend. The command accepts one through
+deadline. Re-run `agent-screen on` to extend. The command accepts one through
 eight hours and does not prompt for a password after installation.
 
 ### Connect from Screens
 
-`ss on` prints a clickable URL using the short hostname derived from
+`agent-screen on` prints a clickable URL using the short hostname derived from
 `Self.DNSName` in `tailscale status --json` and the configured port:
 
 ```
@@ -85,7 +85,7 @@ When an agent is blocked on a login, permission, or decision:
    identical request for ten minutes.
 3. It derives the originating agent from the NATO-alphabet tmux session name;
    callers cannot replace that identity with a project or phase label.
-4. It runs `ss on SCREEN_SHARING_HOURS` and adds the server-derived Screens
+4. It runs `agent-screen on SCREEN_SHARING_HOURS` and adds the server-derived Screens
    URL to the iMessage.
 
 The server cannot read Messages, choose a recipient, accept an

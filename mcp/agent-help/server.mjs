@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -23,14 +20,11 @@ import {
 const SCRIPT_PATH = fileURLToPath(
   new URL("./send-imessage.applescript", import.meta.url),
 );
-const INSTALLED_SCREEN_SHARING_COMMAND = "/usr/local/bin/ss";
-const LEGACY_SCREEN_SHARING_COMMAND = join(homedir(), "bin", "ss");
-const SCREEN_SHARING_COMMAND = process.env.AGENT_HELP_SS_COMMAND ??
-  (existsSync(INSTALLED_SCREEN_SHARING_COMMAND)
-    ? INSTALLED_SCREEN_SHARING_COMMAND
-    : LEGACY_SCREEN_SHARING_COMMAND);
-const SCREEN_SHARING_TIMEOUT =
-  SCREEN_SHARING_COMMAND === LEGACY_SCREEN_SHARING_COMMAND ? 90_000 : 30_000;
+const SCREEN_SHARING_COMMAND =
+  process.env.AGENT_HELP_SCREEN_SHARING_COMMAND ??
+  process.env.AGENT_HELP_SS_COMMAND ??
+  "/usr/local/bin/agent-screen";
+const SCREEN_SHARING_TIMEOUT = 30_000;
 const TMUX_COMMAND = process.env.AGENT_HELP_TMUX_COMMAND ?? "/opt/homebrew/bin/tmux";
 const OSASCRIPT_COMMAND =
   process.env.AGENT_HELP_OSASCRIPT_COMMAND ?? "/usr/bin/osascript";
@@ -66,9 +60,7 @@ function currentAgentName() {
   }
   try {
     const sessionName = normalizeAgentName(result.stdout.trim()).toLowerCase();
-    const name = sessionName.startsWith("claude-")
-      ? sessionName.slice("claude-".length)
-      : sessionName;
+    const name = sessionName.replace(/^(?:copilot|claude|codex)-/, "");
     if (NATO_AGENT_NAMES.has(name)) return name;
   } catch {
     // Normalize all invalid session-name failures below.

@@ -49,7 +49,7 @@ export SS_ROOT_HELPER="/fake/ss-on-demand"
 printf '%s\n' "SCREEN_SHARING_PORT='17777'" > "$TEMP_ROOT/root-config"
 export SS_ROOT_CONFIG_FILE="$TEMP_ROOT/root-config"
 
-RESULT="$("$REPO_ROOT/bin/ss" on 2 --json)"
+RESULT="$("$REPO_ROOT/bin/agent-screen" on 2 --json)"
 /usr/bin/python3 -c '
 import json, sys
 data=json.loads(sys.argv[1])
@@ -62,34 +62,34 @@ assert data == {
 }
 ' "$RESULT"
 
-"$REPO_ROOT/bin/ss" on --json |
+"$REPO_ROOT/bin/agent-screen" on --json |
   /usr/bin/python3 -c 'import json,sys; assert json.load(sys.stdin)["enabled"] is True'
 
-"$REPO_ROOT/bin/ss" off --json |
+"$REPO_ROOT/bin/agent-screen" off --json |
   /usr/bin/python3 -c 'import json,sys; assert json.load(sys.stdin) == {"enabled": False}'
 
 : > "$TEMP_ROOT/sudo.log"
 touch "$TEMP_ROOT/omit-helper-port"
-if "$REPO_ROOT/bin/ss" on 1 --json >/dev/null 2>&1; then
-  echo "ss accepted incomplete privileged helper output" >&2
+if "$REPO_ROOT/bin/agent-screen" on 1 --json >/dev/null 2>&1; then
+  echo "agent-screen accepted incomplete privileged helper output" >&2
   exit 1
 fi
 rm -f "$TEMP_ROOT/omit-helper-port"
 grep -q -- '-n /fake/ss-on-demand on 1' "$TEMP_ROOT/sudo.log"
 grep -q -- '-n /fake/ss-on-demand off' "$TEMP_ROOT/sudo.log"
 
-if "$REPO_ROOT/bin/ss" on 9 --json >/dev/null 2>&1; then
-  echo "ss accepted an out-of-range lease" >&2
+if "$REPO_ROOT/bin/agent-screen" on 9 --json >/dev/null 2>&1; then
+  echo "agent-screen accepted an out-of-range lease" >&2
   exit 1
 fi
 
 : > "$TEMP_ROOT/sudo.log"
-if NO_DNS=true "$REPO_ROOT/bin/ss" on 1 --json >/dev/null 2>&1; then
-  echo "ss opened access without a Tailscale DNS identity" >&2
+if NO_DNS=true "$REPO_ROOT/bin/agent-screen" on 1 --json >/dev/null 2>&1; then
+  echo "agent-screen opened access without a Tailscale DNS identity" >&2
   exit 1
 fi
 [ ! -s "$TEMP_ROOT/sudo.log" ] || {
-  echo "ss called the privileged helper after hostname resolution failed" >&2
+  echo "agent-screen called the privileged helper after hostname resolution failed" >&2
   exit 1
 }
 
