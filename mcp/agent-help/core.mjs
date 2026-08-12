@@ -232,14 +232,22 @@ function readState(path) {
   }
 }
 
-export function reserveSend(message, now = Date.now(), path = agentHelpPaths().state) {
+function recentSends(now, path) {
   const state = readState(path);
-  const sends = state.sends.filter(
+  return state.sends.filter(
     (entry) =>
       Number.isFinite(entry?.sentAt) &&
       typeof entry?.message === "string" &&
       now - entry.sentAt < 60 * 60 * 1000,
   );
+}
+
+export function checkSendAllowed(
+  message,
+  now = Date.now(),
+  path = agentHelpPaths().state,
+) {
+  const sends = recentSends(now, path);
   if (
     sends.some(
       (entry) => entry.message === message && now - entry.sentAt < DEDUPLICATION_MS,
@@ -250,9 +258,17 @@ export function reserveSend(message, now = Date.now(), path = agentHelpPaths().s
   if (sends.length >= MAX_SENDS_PER_HOUR) {
     return { allowed: false, reason: "rate_limited" };
   }
+  return { allowed: true };
+}
+
+export function recordSend(
+  message,
+  now = Date.now(),
+  path = agentHelpPaths().state,
+) {
+  const sends = recentSends(now, path);
   sends.push({ message, sentAt: now });
   privateWrite(path, { version: 1, sends });
-  return { allowed: true };
 }
 
 function sleep(milliseconds) {

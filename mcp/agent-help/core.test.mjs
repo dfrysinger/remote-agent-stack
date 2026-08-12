@@ -12,11 +12,12 @@ import test from "node:test";
 import {
   agentHelpPaths,
   buildMessage,
+  checkSendAllowed,
   countOnlineDisplays,
   DEDUPLICATION_MS,
   MAX_SENDS_PER_HOUR,
   readConfig,
-  reserveSend,
+  recordSend,
   screensUrl,
   shouldEnableRemoteAccess,
   withOperationLock,
@@ -123,17 +124,19 @@ test("deduplicates and rate limits sends", () => {
   const directory = mkdtempSync(join(tmpdir(), "agent-help-state-"));
   const path = join(directory, "state.json");
   const start = 1_000_000;
-  assert.deepEqual(reserveSend("one", start, path), { allowed: true });
-  assert.deepEqual(reserveSend("one", start + DEDUPLICATION_MS - 1, path), {
+  assert.deepEqual(checkSendAllowed("one", start, path), { allowed: true });
+  recordSend("one", start, path);
+  assert.deepEqual(checkSendAllowed("one", start + DEDUPLICATION_MS - 1, path), {
     allowed: false,
     reason: "duplicate",
   });
   for (let index = 1; index < MAX_SENDS_PER_HOUR; index += 1) {
-    assert.deepEqual(reserveSend(`message-${index}`, start + index, path), {
+    assert.deepEqual(checkSendAllowed(`message-${index}`, start + index, path), {
       allowed: true,
     });
+    recordSend(`message-${index}`, start + index, path);
   }
-  assert.deepEqual(reserveSend("too-many", start + 100, path), {
+  assert.deepEqual(checkSendAllowed("too-many", start + 100, path), {
     allowed: false,
     reason: "rate_limited",
   });
@@ -144,17 +147,23 @@ test("corrupt state fails closed", () => {
   const directory = mkdtempSync(join(tmpdir(), "agent-help-state-"));
   const path = join(directory, "state.json");
   writeFileSync(path, "{broken", "utf8");
-  assert.throws(() => reserveSend("one", Date.now(), path));
+  assert.throws(() => checkSendAllowed("one", Date.now(), path));
 });
 
-test("operation lock serializes concurrent reservations", async () => {
+test("operation lock serializes concurrent sends", async () => {
   const directory = mkdtempSync(join(tmpdir(), "agent-help-lock-"));
   const paths = agentHelpPaths(directory);
   mkdirSync(paths.directory, { recursive: true });
   const results = await Promise.all(
     Array.from({ length: 8 }, (_, index) =>
       withOperationLock(
-        async () => reserveSend(`message-${index}`, 1_000_000 + index, paths.state),
+        async () => {
+          const message = `message-${index}`;
+          const now = 1_000_000 + index;
+          const result = checkSendAllowed(message, now, paths.state);
+          if (result.allowed) recordSend(message, now, paths.state);
+          return result;
+        },
         { lockPath: paths.lock },
       ),
     ),

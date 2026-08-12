@@ -11,9 +11,10 @@ import {
 import {
   agentHelpPaths,
   buildMessage,
+  checkSendAllowed,
   normalizeAgentName,
   readConfig,
-  reserveSend,
+  recordSend,
   withOperationLock,
 } from "./core.mjs";
 
@@ -47,12 +48,18 @@ function run(command, args, timeout) {
 }
 
 function currentAgentName() {
-  if (!process.env.TMUX) {
+  if (!process.env.TMUX || !process.env.TMUX_PANE) {
     throw new Error("request_help requires a NATO-named tmux agent session");
   }
   const result = run(
     TMUX_COMMAND,
-    ["display-message", "-p", "#{session_name}"],
+    [
+      "display-message",
+      "-p",
+      "-t",
+      process.env.TMUX_PANE,
+      "#{session_name}",
+    ],
     2_000,
   );
   if (result.status !== 0) {
@@ -168,7 +175,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       context: args.context,
     });
     const paths = agentHelpPaths();
-    const reservation = reserveSend(baseMessage, Date.now(), paths.state);
+    const now = Date.now();
+    const reservation = checkSendAllowed(baseMessage, now, paths.state);
     if (!reservation.allowed) {
       return {
         content: [{
@@ -202,6 +210,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (remote.createdLease) disableScreenSharing();
       throw error;
     }
+    recordSend(baseMessage, now, paths.state);
     return {
       content: [{
         type: "text",

@@ -46,6 +46,7 @@ async function withServer(
   const screenSharing = join(directory, "agent-screen");
   const osascript = join(directory, "osascript");
   const tmux = join(directory, "tmux");
+  const tmuxArgs = join(directory, "tmux-args");
   const body = join(directory, "message-body");
   executable(
     screenSharing,
@@ -68,7 +69,11 @@ printf '%s' "\${3:-}" > ${JSON.stringify(body)}
 ${sendFails ? "exit 1" : "exit 0"}`,
   );
   if (tmuxName !== null) {
-    executable(tmux, `printf '%s\\n' ${JSON.stringify(tmuxName)}`);
+    executable(
+      tmux,
+      `printf '%s\\n' "$*" > ${JSON.stringify(tmuxArgs)}
+printf '%s\\n' ${JSON.stringify(tmuxName)}`,
+    );
   }
 
   const transport = new StdioClientTransport({
@@ -81,21 +86,21 @@ ${sendFails ? "exit 1" : "exit 0"}`,
       AGENT_HELP_OSASCRIPT_COMMAND: osascript,
       ...(tmuxName === null
         ? {}
-        : { TMUX: "test", AGENT_HELP_TMUX_COMMAND: tmux }),
+        : { TMUX: "test", TMUX_PANE: "%42", AGENT_HELP_TMUX_COMMAND: tmux }),
     },
     stderr: "pipe",
   });
   const client = new Client({ name: "agent-help-test", version: "1.0.0" });
   await client.connect(transport);
   try {
-    await callback({ client, configRoot, log, body });
+    await callback({ client, configRoot, log, body, tmuxArgs });
   } finally {
     await client.close();
   }
 }
 
 test("lists request_help and advertises remote access after successful enablement", async () => {
-  await withServer({}, async ({ client, log }) => {
+  await withServer({}, async ({ client, configRoot, log }) => {
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name), ["request_help"]);
     assert.equal(
@@ -111,13 +116,19 @@ test("lists request_help and advertises remote access after successful enablemen
       "agent-screen on 1 --json",
       "message",
     ]);
+    assert.equal(
+      JSON.parse(
+        readFileSync(join(configRoot, "agent-help", "state.json"), "utf8"),
+      ).sends.length,
+      1,
+    );
   });
 });
 
-test("failed send tears down only a lease created by that request", async () => {
+test("failed send creates no ledger entry and tears down only a new lease", async () => {
   await withServer(
     { createdLease: true, sendFails: true },
-    async ({ client, log }) => {
+    async ({ client, configRoot, log }) => {
       await assert.rejects(() =>
         client.callTool({
           name: "request_help",
@@ -129,11 +140,15 @@ test("failed send tears down only a lease created by that request", async () => 
         "message",
         "agent-screen off --json",
       ]);
+      assert.equal(
+        existsSync(join(configRoot, "agent-help", "state.json")),
+        false,
+      );
     },
   );
   await withServer(
     { createdLease: false, sendFails: true },
-    async ({ client, log }) => {
+    async ({ client, configRoot, log }) => {
       await assert.rejects(() =>
         client.callTool({
           name: "request_help",
@@ -144,12 +159,16 @@ test("failed send tears down only a lease created by that request", async () => 
         "agent-screen on 1 --json",
         "message",
       ]);
+      assert.equal(
+        existsSync(join(configRoot, "agent-help", "state.json")),
+        false,
+      );
     },
   );
 });
 
-test("uses the tmux NATO name and exposes no caller-supplied identity", async () => {
-  await withServer({ tmuxName: "lima" }, async ({ client, body }) => {
+test("uses the tmux NATO name from the MCP process pane", async () => {
+  await withServer({ tmuxName: "lima" }, async ({ client, body, tmuxArgs }) => {
     await client.callTool({
       name: "request_help",
       arguments: {
@@ -161,6 +180,10 @@ test("uses the tmux NATO name and exposes no caller-supplied identity", async ()
     assert.match(
       readFileSync(body, "utf8"),
       /screens:\/\/test-mac:15900$/,
+    );
+    assert.equal(
+      readFileSync(tmuxArgs, "utf8").trim(),
+      "display-message -p -t %42 #{session_name}",
     );
   });
 });
@@ -221,10 +244,8 @@ test("does not send a linkless message when Screen Sharing fails", async () => {
       ]);
       assert.equal(existsSync(body), false);
       assert.equal(
-        JSON.parse(
-          readFileSync(join(configRoot, "agent-help", "state.json"), "utf8"),
-        ).sends.length,
-        1,
+        existsSync(join(configRoot, "agent-help", "state.json")),
+        false,
       );
     },
   );
